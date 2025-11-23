@@ -26,8 +26,11 @@ let extensionEnabled = true;
 const TOGGLE_KEY = 'extension_enabled';
 const DEFAULT_ENABLED = true;
 
-// Track usernames currently being processed to avoid duplicate requests
-const processingUsernames = new Set();
+// Track pending location requests to avoid duplicate API calls
+// Map<username, Promise<location>> - serves dual purpose:
+// 1. Check if username exists → it's being processed
+// 2. Get the promise → we can await it
+const pendingLocationRequests = new Map();
 
 // Statistics tracking - unique profiles per country/region
 const locationStats = new Map(); // Map<location, Set<username>> - in memory for deduplication
@@ -388,6 +391,8 @@ function makeLocationRequest(screenName) {
     // Timeout after 10 seconds
     setTimeout(() => {
       window.removeEventListener('message', handler);
+      // Remove from pending requests on timeout
+      pendingLocationRequests.delete(screenName);
       // Don't cache timeout failures - allow retry
       console.log(`Request timeout for ${screenName}, not caching`);
       resolve(null);
@@ -434,6 +439,25 @@ async function getLocation(screenName) {
     }
   }
   
+  // Check if there's already a pending request for this username
+  if (pendingLocationRequests.has(screenName)) {
+    console.log(`⏳ Waiting for pending request for @${screenName}`);
+    const location = await pendingLocationRequests.get(screenName);
+    // After waiting, check cache again - it might have been updated
+    if (locationCache.has(screenName)) {
+      const cached = locationCache.get(screenName);
+      const now = Date.now();
+      if (cached.expiry && cached.expiry > now) {
+        const locationInfo = getLocationInfo(cached.location);
+        const display = locationInfo.flag || locationInfo.displayText || 'null';
+        console.log(`✅ CACHE HIT (after wait): @${screenName} → ${display}`);
+        return locationInfo;
+      }
+    }
+    // Return the location from the pending request
+    return getLocationInfo(location);
+  }
+  
   // Not in cache or expired, need to fetch from API
   // Check if queue is full
   if (requestQueue.length >= MAX_QUEUE_SIZE) {
@@ -443,11 +467,29 @@ async function getLocation(screenName) {
   
   console.log(`📡 API REQUEST: @${screenName} (queue: ${requestQueue.length}/${MAX_QUEUE_SIZE})`);
   
-  // Queue the API request
-  const location = await new Promise((resolve, reject) => {
-    requestQueue.push({ screenName, resolve, reject });
+  // Create the promise for this request and store it
+  const locationPromise = new Promise((resolve, reject) => {
+    requestQueue.push({ 
+      screenName, 
+      resolve: (location) => {
+        // Remove from pending requests when resolved
+        pendingLocationRequests.delete(screenName);
+        resolve(location);
+      }, 
+      reject: (error) => {
+        // Remove from pending requests when rejected
+        pendingLocationRequests.delete(screenName);
+        reject(error);
+      }
+    });
     processRequestQueue();
   });
+  
+  // Store the promise so other calls can wait for it
+  pendingLocationRequests.set(screenName, locationPromise);
+  
+  // Wait for the API request
+  const location = await locationPromise;
   
   // Return location info with flag/country/region logic
   return getLocationInfo(location);
@@ -612,12 +654,24 @@ async function addFlagToUsername(usernameElement, screenName) {
   }
 
   // Check if this username is already being processed (prevent duplicate API calls)
-  if (processingUsernames.has(screenName)) {
-    // Wait a bit and check if flag was added by the other process
-    await new Promise(resolve => setTimeout(resolve, 500));
+  if (pendingLocationRequests.has(screenName)) {
+    // Wait for the pending request to complete
+    const locationInfo = await getLocation(screenName);
+    
+    // Check if flag was added by the other process
     if (usernameElement.dataset.flagAdded === 'true') {
       return;
     }
+    
+    // Try to add flag with the location we got
+    if (locationInfo && locationInfo.location) {
+      const success = addFlagToElement(usernameElement, screenName, locationInfo);
+      if (success) {
+        usernameElement.dataset.flagAdded = 'true';
+        return;
+      }
+    }
+    
     // If still not added, mark this container as waiting
     usernameElement.dataset.flagAdded = 'waiting';
     return;
@@ -625,7 +679,6 @@ async function addFlagToUsername(usernameElement, screenName) {
 
   // Mark as processing to avoid duplicate requests
   usernameElement.dataset.flagAdded = 'processing';
-  processingUsernames.add(screenName);
   
   // Find User-Name container for shimmer placement
   const userNameContainer = usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
@@ -707,8 +760,7 @@ async function addFlagToUsername(usernameElement, screenName) {
     }
     usernameElement.dataset.flagAdded = 'failed';
   } finally {
-    // Remove from processing set
-    processingUsernames.delete(screenName);
+    // Note: pendingLocationRequests is cleaned up in getLocation() when promise resolves/rejects
   }
 }
 
