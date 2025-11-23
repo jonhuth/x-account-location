@@ -1,19 +1,25 @@
 // Cache for user locations - persistent storage
-let locationCache = new Map();
+let locationCache = new Map(); // Map<username, {location: string|null, expiry: number}>
 const CACHE_KEY = 'twitter_location_cache';
-const CACHE_EXPIRY_DAYS = 30; // Cache for 30 days
+const CACHE_EXPIRY_DAYS = 30; // Cache for 30 days for valid locations
+const NULL_CACHE_EXPIRY_DAYS = 1; // Cache for 1 day for null entries (no location found)
 
 // Rate limiting
 const requestQueue = [];
 let isProcessingQueue = false;
 let lastRequestTime = 0;
-const MIN_REQUEST_INTERVAL = 2000; // 2 seconds between requests (increased to avoid rate limits)
-const MAX_CONCURRENT_REQUESTS = 2; // Reduced concurrent requests
+const MIN_REQUEST_INTERVAL = 3500; // 3.5 seconds between requests (increased to avoid rate limits)
+const MAX_CONCURRENT_REQUESTS = 1; // Single concurrent request to reduce API load
+const MAX_QUEUE_SIZE = 50; // Maximum queue size to prevent unbounded growth
 let activeRequests = 0;
 let rateLimitResetTime = 0; // Unix timestamp when rate limit resets
+let consecutiveRateLimits = 0; // Track consecutive rate limits for exponential backoff
+const BASE_BACKOFF_MINUTES = 5; // Base wait time in minutes
 
 // Observer for dynamically loaded content
 let observer = null;
+// IntersectionObserver for visible elements
+let intersectionObserver = null;
 
 // Extension enabled state
 let extensionEnabled = true;
@@ -22,6 +28,10 @@ const DEFAULT_ENABLED = true;
 
 // Track usernames currently being processed to avoid duplicate requests
 const processingUsernames = new Set();
+
+// Statistics tracking - unique profiles per country/region
+const locationStats = new Map(); // Map<location, Set<username>> - in memory for deduplication
+const STATS_KEY = 'location_stats'; // Storage key for statistics (counts only)
 
 // Load enabled state
 async function loadEnabledState() {
@@ -44,12 +54,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (extensionEnabled) {
       // Re-initialize if enabled
       setTimeout(() => {
-        processUsernames();
+        processUsernamesThrottled();
       }, 500);
     } else {
       // Remove all flags if disabled
       removeAllFlags();
     }
+  } else if (request.type === 'resetStats') {
+    // Clear in-memory statistics
+    locationStats.clear();
+    console.log('Statistics reset');
   }
 });
 
@@ -67,13 +81,27 @@ async function loadCache() {
       const cached = result[CACHE_KEY];
       const now = Date.now();
       
-      // Filter out expired entries and null entries (allow retry)
+      // Filter out expired entries (including null entries that expired)
       for (const [username, data] of Object.entries(cached)) {
-        if (data.expiry && data.expiry > now && data.location !== null) {
-          locationCache.set(username, data.location);
+        if (data.expiry && data.expiry > now) {
+          locationCache.set(username, {
+            location: data.location,
+            expiry: data.expiry
+          });
+          
+          // Rebuild stats from cache
+          if (data.location !== null) {
+            if (!locationStats.has(data.location)) {
+              locationStats.set(data.location, new Set());
+            }
+            locationStats.get(data.location).add(username);
+          }
         }
       }
-      console.log(`Loaded ${locationCache.size} cached locations (excluding null entries)`);
+      const validCount = Array.from(locationCache.values()).filter(e => e.location !== null).length;
+      const nullCount = Array.from(locationCache.values()).filter(e => e.location === null).length;
+      console.log(`Loaded ${locationCache.size} cached entries (${validCount} valid, ${nullCount} null)`);
+      console.log(`Rebuilt stats for ${locationStats.size} locations`);
     }
   } catch (error) {
     // Extension context invalidated errors are expected when extension is reloaded
@@ -97,13 +125,17 @@ async function saveCache() {
     
     const cacheObj = {};
     const now = Date.now();
-    const expiry = now + (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
     
-    for (const [username, location] of locationCache.entries()) {
+    for (const [username, entry] of locationCache.entries()) {
+      // Use existing expiry if available, otherwise calculate new one
+      const expiry = entry.expiry || (entry.location === null 
+        ? now + (NULL_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+        : now + (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
+      
       cacheObj[username] = {
-        location: location,
+        location: entry.location,
         expiry: expiry,
-        cachedAt: now
+        cachedAt: entry.cachedAt || now
       };
     }
     
@@ -119,6 +151,68 @@ async function saveCache() {
   }
 }
 
+// Load statistics from persistent storage
+async function loadStats() {
+  try {
+    if (!chrome.runtime?.id) {
+      console.log('Extension context invalidated, skipping stats load');
+      return;
+    }
+    
+    const result = await chrome.storage.local.get(STATS_KEY);
+    if (result[STATS_KEY]) {
+      const stats = result[STATS_KEY];
+      // Convert counts back to Sets for deduplication (we'll rebuild from cache)
+      // For now, just store the counts - we'll rebuild Sets as we process new entries
+      console.log(`Loaded stats for ${Object.keys(stats).length} locations`);
+    }
+  } catch (error) {
+    console.error('Error loading stats:', error);
+  }
+}
+
+// Save statistics to persistent storage (counts only)
+async function saveStats() {
+  try {
+    if (!chrome.runtime?.id) {
+      console.log('Extension context invalidated, skipping stats save');
+      return;
+    }
+    
+    const statsObj = {};
+    for (const [location, usernames] of locationStats.entries()) {
+      statsObj[location] = usernames.size; // Store only count
+    }
+    
+    await chrome.storage.local.set({ [STATS_KEY]: statsObj });
+  } catch (error) {
+    console.error('Error saving stats:', error);
+  }
+}
+
+// Update statistics when a location is cached
+function updateStats(username, location) {
+  if (!location) {
+    return; // Don't track null locations
+  }
+  
+  if (!locationStats.has(location)) {
+    locationStats.set(location, new Set());
+  }
+  
+  const usernames = locationStats.get(location);
+  if (!usernames.has(username)) {
+    usernames.add(username);
+    // Debounce stats save - save every 2 seconds for real-time popup updates
+    if (!saveStats.timeout) {
+      saveStats.timeout = setTimeout(async () => {
+        await saveStats();
+        saveStats.timeout = null;
+      }, 2000);
+    }
+  }
+}
+
 // Save a single entry to cache
 async function saveCacheEntry(username, location) {
   // Check if extension context is still valid
@@ -127,7 +221,22 @@ async function saveCacheEntry(username, location) {
     return;
   }
   
-  locationCache.set(username, location);
+  const now = Date.now();
+  const expiry = location === null
+    ? now + (NULL_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+    : now + (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  
+  locationCache.set(username, {
+    location: location,
+    expiry: expiry,
+    cachedAt: now
+  });
+  
+  // Update statistics for non-null locations
+  if (location !== null) {
+    updateStats(username, location);
+  }
+  
   // Debounce saves - only save every 5 seconds
   if (!saveCache.timeout) {
     saveCache.timeout = setTimeout(async () => {
@@ -150,9 +259,18 @@ function injectPageScript() {
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
     if (event.data && event.data.type === '__rateLimitInfo') {
-      rateLimitResetTime = event.data.resetTime;
-      const waitTime = event.data.waitTime;
-      console.log(`Rate limit detected. Will resume requests in ${Math.ceil(waitTime / 1000 / 60)} minutes`);
+      consecutiveRateLimits++;
+      const baseWaitMinutes = BASE_BACKOFF_MINUTES * Math.pow(2, consecutiveRateLimits - 1);
+      const exponentialWaitSeconds = baseWaitMinutes * 60;
+      
+      // Use the longer of: API-reported reset time or exponential backoff
+      const apiResetTime = event.data.resetTime;
+      const exponentialResetTime = Math.floor(Date.now() / 1000) + exponentialWaitSeconds;
+      
+      rateLimitResetTime = Math.max(apiResetTime, exponentialResetTime);
+      
+      const waitMinutes = Math.ceil((rateLimitResetTime - Math.floor(Date.now() / 1000)) / 60);
+      console.warn(`🚫 RATE LIMIT #${consecutiveRateLimits}: Exponential backoff active. Will resume in ${waitMinutes} minutes (backoff: ${baseWaitMinutes}min base × 2^${consecutiveRateLimits - 1})`);
     }
   });
 }
@@ -168,13 +286,28 @@ async function processRequestQueue() {
     const now = Math.floor(Date.now() / 1000);
     if (now < rateLimitResetTime) {
       const waitTime = (rateLimitResetTime - now) * 1000;
-      console.log(`Rate limited. Waiting ${Math.ceil(waitTime / 1000 / 60)} minutes...`);
+      const waitMinutes = Math.ceil(waitTime / 1000 / 60);
+      console.log(`⏸️  Rate limited. Waiting ${waitMinutes} minutes... (${consecutiveRateLimits} consecutive rate limit${consecutiveRateLimits > 1 ? 's' : ''})`);
+      // Clean up queue on rate limit - reject pending requests
+      while (requestQueue.length > 0) {
+        const { reject } = requestQueue.shift();
+        reject(new Error('Rate limited'));
+      }
       setTimeout(processRequestQueue, Math.min(waitTime, 60000)); // Check every minute max
       return;
     } else {
-      // Rate limit expired, reset
+      // Rate limit expired, reset counters
+      if (consecutiveRateLimits > 0) {
+        console.log(`✅ Rate limit cleared after ${consecutiveRateLimits} consecutive limit${consecutiveRateLimits > 1 ? 's' : ''}. Resuming normal operation.`);
+      }
       rateLimitResetTime = 0;
+      consecutiveRateLimits = 0;
     }
+  }
+  
+  // Log queue status
+  if (requestQueue.length > 0) {
+    console.log(`Processing queue: ${requestQueue.length} requests pending, ${activeRequests} active`);
   }
   
   isProcessingQueue = true;
@@ -195,6 +328,11 @@ async function processRequestQueue() {
     // Make the request
     makeLocationRequest(screenName)
       .then(location => {
+        // Successful request - reset consecutive rate limit counter
+        if (consecutiveRateLimits > 0) {
+          console.log(`✅ Successful request after ${consecutiveRateLimits} rate limit${consecutiveRateLimits > 1 ? 's' : ''}. Resetting backoff.`);
+          consecutiveRateLimits = 0;
+        }
         resolve(location);
       })
       .catch(error => {
@@ -232,7 +370,7 @@ function makeLocationRequest(screenName) {
         if (!isRateLimited) {
           saveCacheEntry(screenName, location || null);
         } else {
-          console.log(`Not caching null for ${screenName} due to rate limit`);
+          console.warn(`⚠️  Not caching null for ${screenName} due to rate limit`);
         }
         
         resolve(location || null);
@@ -257,28 +395,62 @@ function makeLocationRequest(screenName) {
   });
 }
 
-// Function to query Twitter GraphQL API for user location (with rate limiting)
-async function getUserLocation(screenName) {
+// Helper function to get location info (flag || country || region)
+// Returns: { location: string|null, flag: string|null, displayText: string }
+function getLocationInfo(location) {
+  if (!location) {
+    return { location: null, flag: null, displayText: null };
+  }
+  
+  const flag = getCountryFlag(location);
+  
+  if (flag) {
+    return { location, flag, displayText: flag };
+  } else {
+    // No flag found, use location text as fallback
+    return { location, flag: null, displayText: `(${location})` };
+  }
+}
+
+// Get location for a username (checks cache first, then API)
+// Returns: { location: string|null, flag: string|null, displayText: string }
+async function getLocation(screenName) {
   // Check cache first
   if (locationCache.has(screenName)) {
     const cached = locationCache.get(screenName);
-    // Don't return cached null - retry if it was null before (might have been rate limited)
-    if (cached !== null) {
-      console.log(`Using cached location for ${screenName}: ${cached}`);
-      return cached;
+    const now = Date.now();
+    
+    // Check if cache entry is expired
+    if (cached.expiry && cached.expiry > now) {
+      // Cache is valid, return location info
+      const locationInfo = getLocationInfo(cached.location);
+      const display = locationInfo.flag || locationInfo.displayText || 'null';
+      console.log(`✅ CACHE HIT: @${screenName} → ${display} (${cached.location || 'no location'})`);
+      return locationInfo;
     } else {
-      console.log(`Found null in cache for ${screenName}, will retry API call`);
-      // Remove from cache to allow retry
+      // Cache expired, remove it
+      console.log(`⏰ Cache expired for ${screenName}, removing`);
       locationCache.delete(screenName);
     }
   }
   
-  console.log(`Queueing API request for ${screenName}`);
-  // Queue the request
-  return new Promise((resolve, reject) => {
+  // Not in cache or expired, need to fetch from API
+  // Check if queue is full
+  if (requestQueue.length >= MAX_QUEUE_SIZE) {
+    console.warn(`Queue full (${requestQueue.length}/${MAX_QUEUE_SIZE}), rejecting request for ${screenName}`);
+    return { location: null, flag: null, displayText: null };
+  }
+  
+  console.log(`📡 API REQUEST: @${screenName} (queue: ${requestQueue.length}/${MAX_QUEUE_SIZE})`);
+  
+  // Queue the API request
+  const location = await new Promise((resolve, reject) => {
     requestQueue.push({ screenName, resolve, reject });
     processRequestQueue();
   });
+  
+  // Return location info with flag/country/region logic
+  return getLocationInfo(location);
 }
 
 // Function to extract username from various Twitter UI elements
@@ -492,240 +664,27 @@ async function addFlagToUsername(usernameElement, screenName) {
   try {
     console.log(`Processing flag for ${screenName}...`);
 
-    // Get location
-    const location = await getUserLocation(screenName);
-    console.log(`Location for ${screenName}:`, location);
+    // Get location info (flag || country || region)
+    const locationInfo = await getLocation(screenName);
     
     // Remove shimmer
     if (shimmerInserted && shimmerSpan.parentNode) {
       shimmerSpan.remove();
     }
     
-    if (!location) {
+    if (!locationInfo || !locationInfo.location) {
       console.log(`No location found for ${screenName}, marking as failed`);
       usernameElement.dataset.flagAdded = 'failed';
       return;
     }
 
-  // Get flag emoji, or use location text as fallback
-  const flag = getCountryFlag(location);
-  const useTextFallback = !flag;
-  
-  if (useTextFallback) {
-    console.log(`No flag found for location: ${location}, using text fallback`);
-  } else {
-    console.log(`Found flag ${flag} for ${screenName} (${location})`);
-  }
+    console.log(`Location info for ${screenName}:`, locationInfo);
 
-  // Find the username link - try multiple strategies
-  // Priority: Find the @username link, not the display name link
-  let usernameLink = null;
-  
-  // Find the User-Name container (reuse from above if available, otherwise find it)
-  const containerForLink = userNameContainer || usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
-  
-  // Strategy 1: Find link with @username text content (most reliable - this is the actual handle)
-  if (containerForLink) {
-    const containerLinks = containerForLink.querySelectorAll('a[href^="/"]');
-    for (const link of containerLinks) {
-      const text = link.textContent?.trim();
-      const href = link.getAttribute('href');
-      const match = href.match(/^\/([^\/\?]+)/);
-      
-      // Prioritize links that have @username as text
-      if (match && match[1] === screenName) {
-        if (text === `@${screenName}` || text === screenName) {
-          usernameLink = link;
-          break;
-        }
-      }
-    }
-  }
-  
-  // Strategy 2: Find any link with @username text in UserName container
-  if (!usernameLink && containerForLink) {
-    const containerLinks = containerForLink.querySelectorAll('a[href^="/"]');
-    for (const link of containerLinks) {
-      const text = link.textContent?.trim();
-      if (text === `@${screenName}`) {
-        usernameLink = link;
-        break;
-      }
-    }
-  }
-  
-  // Strategy 3: Find link with exact matching href that has @username text anywhere in element
-  if (!usernameLink) {
-    const links = usernameElement.querySelectorAll('a[href^="/"]');
-    for (const link of links) {
-      const href = link.getAttribute('href');
-      const text = link.textContent?.trim();
-      if ((href === `/${screenName}` || href.startsWith(`/${screenName}?`)) && 
-          (text === `@${screenName}` || text === screenName)) {
-        usernameLink = link;
-        break;
-      }
-    }
-  }
-  
-  // Strategy 4: Fallback to any matching href (but prefer ones not in display name area)
-  if (!usernameLink) {
-    const links = usernameElement.querySelectorAll('a[href^="/"]');
-    for (const link of links) {
-      const href = link.getAttribute('href');
-      const match = href.match(/^\/([^\/\?]+)/);
-      if (match && match[1] === screenName) {
-        // Skip if this looks like a display name link (has verification badge nearby)
-        const hasVerificationBadge = link.closest('[data-testid="User-Name"]')?.querySelector('[data-testid="icon-verified"]');
-        if (!hasVerificationBadge || link.textContent?.trim() === `@${screenName}`) {
-          usernameLink = link;
-          break;
-        }
-      }
-    }
-  }
-
-  if (!usernameLink) {
-    console.error(`Could not find username link for ${screenName}`);
-    console.error('Available links in container:', Array.from(usernameElement.querySelectorAll('a[href^="/"]')).map(l => ({
-      href: l.getAttribute('href'),
-      text: l.textContent?.trim()
-    })));
-    // Remove shimmer on error
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
-    usernameElement.dataset.flagAdded = 'failed';
-    return;
-  }
-  
-  console.log(`Found username link for ${screenName}:`, usernameLink.href, usernameLink.textContent?.trim());
-
-  // Check if flag already exists (check in the entire container, not just parent)
-  const existingFlag = usernameElement.querySelector('[data-twitter-flag]');
-  if (existingFlag) {
-    // Remove shimmer if flag already exists
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
-    usernameElement.dataset.flagAdded = 'true';
-    return;
-  }
-
-  // Add flag emoji or location text - place it next to verification badge, before @ handle
-  const flagSpan = document.createElement('span');
-  if (useTextFallback) {
-    // Show location text as fallback when no flag is available
-    flagSpan.textContent = ` (${location})`;
-    flagSpan.style.fontSize = '0.9em';
-    flagSpan.style.opacity = '0.7';
-  } else {
-    flagSpan.textContent = ` ${flag}`;
-  }
-  flagSpan.setAttribute('data-twitter-flag', 'true');
-  flagSpan.setAttribute('title', location); // Show country/region name on hover
-  flagSpan.style.marginLeft = '4px';
-  flagSpan.style.marginRight = '4px';
-  flagSpan.style.display = 'inline';
-  flagSpan.style.color = 'inherit';
-  flagSpan.style.verticalAlign = 'middle';
-  
-  // Use userNameContainer found above, or find it if not found
-  const containerForFlag = userNameContainer || usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
-  
-  if (!containerForFlag) {
-    console.error(`Could not find UserName container for ${screenName}`);
-    // Remove shimmer on error
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
-    usernameElement.dataset.flagAdded = 'failed';
-    return;
-  }
-  
-  // Find the verification badge (SVG with data-testid="icon-verified")
-  const verificationBadge = containerForFlag.querySelector('[data-testid="icon-verified"]');
-  
-  // Find the handle section - the div that contains the @username link
-  // The structure is: User-Name > div (display name) > div (handle section with @username)
-  const handleSection = findHandleSection(containerForFlag, screenName);
-
-  let inserted = false;
-  
-  // Strategy 1: Insert right before the handle section div (which contains @username)
-  // The handle section is a direct child of User-Name container
-  if (handleSection && handleSection.parentNode === containerForFlag) {
-    try {
-      containerForFlag.insertBefore(flagSpan, handleSection);
-      inserted = true;
-      console.log(`✓ Inserted flag before handle section for ${screenName}`);
-    } catch (e) {
-      console.log('Failed to insert before handle section:', e);
-    }
-  }
-  
-  // Strategy 2: Find the handle section's parent and insert before it
-  if (!inserted && handleSection && handleSection.parentNode) {
-    try {
-      // Insert before the handle section's parent (if it's not User-Name)
-      const handleParent = handleSection.parentNode;
-      if (handleParent !== containerForFlag && handleParent.parentNode) {
-        handleParent.parentNode.insertBefore(flagSpan, handleParent);
-        inserted = true;
-        console.log(`✓ Inserted flag before handle parent for ${screenName}`);
-      } else if (handleParent === containerForFlag) {
-        // Handle section is direct child, insert before it
-        containerForFlag.insertBefore(flagSpan, handleSection);
-        inserted = true;
-        console.log(`✓ Inserted flag before handle section (direct child) for ${screenName}`);
-      }
-    } catch (e) {
-      console.log('Failed to insert before handle parent:', e);
-    }
-  }
-  
-  // Strategy 3: Find display name container and insert after it, before handle section
-  if (!inserted && handleSection) {
-    try {
-      // Find the display name link (first link)
-      const displayNameLink = containerForFlag.querySelector('a[href^="/"]');
-      if (displayNameLink) {
-        // Find the div that contains the display name link
-        const displayNameContainer = displayNameLink.closest('div');
-        if (displayNameContainer && displayNameContainer.parentNode) {
-          // Check if handle section is a sibling
-          if (displayNameContainer.parentNode === handleSection.parentNode) {
-            displayNameContainer.parentNode.insertBefore(flagSpan, handleSection);
-            inserted = true;
-            console.log(`✓ Inserted flag between display name and handle (siblings) for ${screenName}`);
-          } else {
-            // Try inserting after display name container
-            displayNameContainer.parentNode.insertBefore(flagSpan, displayNameContainer.nextSibling);
-            inserted = true;
-            console.log(`✓ Inserted flag after display name container for ${screenName}`);
-          }
-        }
-      }
-    } catch (e) {
-      console.log('Failed to insert after display name:', e);
-    }
-  }
-  
-  // Strategy 4: Insert at the end of User-Name container (fallback)
-  if (!inserted) {
-    try {
-      containerForFlag.appendChild(flagSpan);
-      inserted = true;
-      console.log(`✓ Inserted flag at end of UserName container for ${screenName}`);
-    } catch (e) {
-      console.error('Failed to append flag to User-Name container:', e);
-    }
-  }
-  
-    if (inserted) {
-      // Mark as processed
-      usernameElement.dataset.flagAdded = 'true';
-      console.log(`✓ Successfully added flag ${flag} for ${screenName} (${location})`);
+    // Use the helper function to add the flag
+    const success = addFlagToElement(usernameElement, screenName, locationInfo);
+    
+    if (success) {
+      console.log(`✓ Successfully added ${locationInfo.displayText} for ${screenName} (${locationInfo.location})`);
       
       // Also mark any other containers waiting for this username
       const waitingContainers = document.querySelectorAll(`[data-flag-added="waiting"]`);
@@ -737,13 +696,7 @@ async function addFlagToUsername(usernameElement, screenName) {
         }
       });
     } else {
-      console.error(`✗ Failed to insert flag for ${screenName} - tried all strategies`);
-      console.error('Username link:', usernameLink);
-      console.error('Parent structure:', usernameLink.parentNode);
-      // Remove shimmer on failure
-      if (shimmerInserted && shimmerSpan.parentNode) {
-        shimmerSpan.remove();
-      }
+      console.error(`✗ Failed to insert flag for ${screenName}`);
       usernameElement.dataset.flagAdded = 'failed';
     }
   } catch (error) {
@@ -777,6 +730,262 @@ function removeAllFlags() {
   console.log('Removed all flags');
 }
 
+// Throttled wrapper for processUsernames
+let processUsernamesThrottleTimeout = null;
+function processUsernamesThrottled() {
+  if (processUsernamesThrottleTimeout) {
+    return; // Already scheduled
+  }
+  processUsernamesThrottleTimeout = setTimeout(() => {
+    processUsernames();
+    processUsernamesThrottleTimeout = null;
+  }, 3000); // 3 second throttle
+}
+
+// Helper function to add flag to element
+function addFlagToElement(usernameElement, screenName, locationInfo) {
+  // Check if flag already exists
+  const existingFlag = usernameElement.querySelector('[data-twitter-flag]');
+  if (existingFlag) {
+    return true; // Already added
+  }
+  
+  if (!locationInfo || !locationInfo.location) {
+    return false; // No location to display
+  }
+  
+  // Find the User-Name container
+  const containerForFlag = usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+  if (!containerForFlag) {
+    return false;
+  }
+  
+  // Create flag span with flag || country || region
+  const flagSpan = document.createElement('span');
+  flagSpan.textContent = ` ${locationInfo.displayText}`;
+  flagSpan.setAttribute('data-twitter-flag', 'true');
+  flagSpan.setAttribute('title', locationInfo.location);
+  flagSpan.style.marginLeft = '4px';
+  flagSpan.style.marginRight = '4px';
+  flagSpan.style.display = 'inline';
+  flagSpan.style.color = 'inherit';
+  flagSpan.style.verticalAlign = 'middle';
+  
+  // Style text fallback differently
+  if (!locationInfo.flag) {
+    flagSpan.style.fontSize = '0.9em';
+    flagSpan.style.opacity = '0.7';
+  }
+  
+  // Find the handle section
+  const handleSection = findHandleSection(containerForFlag, screenName);
+  
+  let inserted = false;
+  
+  // Strategy 1: Insert right before the handle section
+  if (handleSection && handleSection.parentNode === containerForFlag) {
+    try {
+      containerForFlag.insertBefore(flagSpan, handleSection);
+      inserted = true;
+    } catch (e) {
+      // Continue to next strategy
+    }
+  }
+  
+  // Strategy 2: Insert before handle section's parent
+  if (!inserted && handleSection && handleSection.parentNode) {
+    try {
+      const handleParent = handleSection.parentNode;
+      if (handleParent !== containerForFlag && handleParent.parentNode) {
+        handleParent.parentNode.insertBefore(flagSpan, handleParent);
+        inserted = true;
+      } else if (handleParent === containerForFlag) {
+        containerForFlag.insertBefore(flagSpan, handleSection);
+        inserted = true;
+      }
+    } catch (e) {
+      // Continue to next strategy
+    }
+  }
+  
+  // Strategy 3: Insert after display name container
+  if (!inserted && handleSection) {
+    try {
+      const displayNameLink = containerForFlag.querySelector('a[href^="/"]');
+      if (displayNameLink) {
+        const displayNameContainer = displayNameLink.closest('div');
+        if (displayNameContainer && displayNameContainer.parentNode) {
+          if (displayNameContainer.parentNode === handleSection.parentNode) {
+            displayNameContainer.parentNode.insertBefore(flagSpan, handleSection);
+            inserted = true;
+          } else {
+            displayNameContainer.parentNode.insertBefore(flagSpan, displayNameContainer.nextSibling);
+            inserted = true;
+          }
+        }
+      }
+    } catch (e) {
+      // Continue to fallback
+    }
+  }
+  
+  // Strategy 4: Fallback - append to container
+  if (!inserted) {
+    try {
+      containerForFlag.appendChild(flagSpan);
+      inserted = true;
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  if (inserted) {
+    usernameElement.dataset.flagAdded = 'true';
+    // Update statistics
+    if (locationInfo.location) {
+      updateStats(screenName, locationInfo.location);
+    }
+    return true;
+  }
+  
+  return false;
+}
+
+// Check cache and add flag immediately if cached
+function addFlagFromCache(container, screenName) {
+  if (locationCache.has(screenName)) {
+    const cached = locationCache.get(screenName);
+    const now = Date.now();
+    
+    // Check if cache entry is expired
+    if (cached.expiry && cached.expiry > now && cached.location !== null) {
+      // Cache is valid, get location info and add flag immediately
+      const locationInfo = getLocationInfo(cached.location);
+      if (addFlagToElement(container, screenName, locationInfo)) {
+        const display = locationInfo.flag || locationInfo.displayText || 'null';
+        console.log(`✅ CACHE HIT (display): @${screenName} → ${display}`);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Process visible usernames only
+async function processVisibleUsernames(containers) {
+  const visibleContainers = [];
+  const offScreenContainers = [];
+  
+  // Check visibility using getBoundingClientRect (synchronous, faster)
+  const viewportHeight = window.innerHeight;
+  const viewportWidth = window.innerWidth;
+  
+  for (const container of containers) {
+    const rect = container.getBoundingClientRect();
+    // Consider visible if any part is in viewport
+    const isVisible = rect.top < viewportHeight && 
+                     rect.bottom > 0 && 
+                     rect.left < viewportWidth && 
+                     rect.right > 0;
+    
+    if (isVisible) {
+      visibleContainers.push(container);
+    } else {
+      offScreenContainers.push(container);
+    }
+  }
+  
+  console.log(`Found ${visibleContainers.length} visible and ${offScreenContainers.length} off-screen containers`);
+  
+  // First pass: Check cache for all visible containers and display immediately
+  let cachedCount = 0;
+  const uncachedContainers = [];
+  
+  for (const container of visibleContainers) {
+    const screenName = extractUsername(container);
+    if (screenName) {
+      const status = container.dataset.flagAdded;
+      if (!status || status === 'failed') {
+        // Check cache first
+        if (addFlagFromCache(container, screenName)) {
+          cachedCount++;
+        } else {
+          // Not in cache, will need API call
+          uncachedContainers.push(container);
+        }
+      }
+    }
+  }
+  
+  console.log(`Found ${cachedCount} cached accounts, ${uncachedContainers.length} need API calls`);
+  
+  // Second pass: Process uncached containers in batches (API calls)
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < uncachedContainers.length; i += BATCH_SIZE) {
+    const batch = uncachedContainers.slice(i, i + BATCH_SIZE);
+    for (const container of batch) {
+      const screenName = extractUsername(container);
+      if (screenName) {
+        addFlagToUsername(container, screenName).catch(err => {
+          console.error(`Error processing ${screenName}:`, err);
+          container.dataset.flagAdded = 'failed';
+        });
+      }
+    }
+    // Wait between batches to avoid overwhelming the API
+    if (i + BATCH_SIZE < uncachedContainers.length) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  }
+  
+  // Pre-check cache for off-screen containers and add flags immediately
+  for (const container of offScreenContainers) {
+    const screenName = extractUsername(container);
+    if (screenName) {
+      const status = container.dataset.flagAdded;
+      if (!status || status === 'failed') {
+        // Check cache first - if cached, add flag immediately
+        if (!addFlagFromCache(container, screenName)) {
+          // Not cached, will need API call when scrolled into view
+          container.dataset.flagNeedsApi = 'true';
+        }
+      }
+    }
+  }
+  
+  // Set up IntersectionObserver for off-screen elements that need API calls
+  const uncachedOffScreen = offScreenContainers.filter(c => c.dataset.flagNeedsApi === 'true');
+  if (uncachedOffScreen.length > 0 && !intersectionObserver) {
+    intersectionObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          const container = entry.target;
+          const screenName = extractUsername(container);
+          if (screenName) {
+            const status = container.dataset.flagAdded;
+            if (!status || status === 'failed') {
+              // Double-check cache in case it was added while scrolling
+              if (!addFlagFromCache(container, screenName)) {
+                // Still not cached, make API call
+                addFlagToUsername(container, screenName).catch(err => {
+                  console.error(`Error processing ${screenName}:`, err);
+                  container.dataset.flagAdded = 'failed';
+                });
+              }
+            }
+          }
+          intersectionObserver.unobserve(container);
+        }
+      });
+    }, { threshold: 0.1 });
+    
+    // Observe only uncached off-screen containers
+    uncachedOffScreen.forEach(container => {
+      intersectionObserver.observe(container);
+    });
+  }
+}
+
 // Function to process all username elements on the page
 async function processUsernames() {
   // Check if extension is enabled
@@ -789,39 +998,12 @@ async function processUsernames() {
   
   console.log(`Processing ${containers.length} containers for usernames`);
   
-  let foundCount = 0;
-  let processedCount = 0;
-  let skippedCount = 0;
-  
-  for (const container of containers) {
-    const screenName = extractUsername(container);
-    if (screenName) {
-      foundCount++;
-      const status = container.dataset.flagAdded;
-      if (!status || status === 'failed') {
-        processedCount++;
-        // Process in parallel but limit concurrency
-        addFlagToUsername(container, screenName).catch(err => {
-          console.error(`Error processing ${screenName}:`, err);
-          container.dataset.flagAdded = 'failed';
-        });
-      } else {
-        skippedCount++;
-      }
-    } else {
-      // Debug: log containers that don't have usernames
-      const hasUserName = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
-      if (hasUserName) {
-        console.log('Found UserName container but no username extracted');
-      }
-    }
+  if (containers.length === 0) {
+    return;
   }
   
-  if (foundCount > 0) {
-    console.log(`Found ${foundCount} usernames, processing ${processedCount} new ones, skipped ${skippedCount} already processed`);
-  } else {
-    console.log('No usernames found in containers');
-  }
+  // Process visible elements first, then set up observer for off-screen
+  await processVisibleUsernames(containers);
 }
 
 // Initialize observer for dynamically loaded content
@@ -845,8 +1027,8 @@ function initObserver() {
     }
     
     if (shouldProcess) {
-      // Debounce processing
-      setTimeout(processUsernames, 500);
+      // Throttle processing to reduce API calls
+      processUsernamesThrottled();
     }
   });
 
@@ -866,6 +1048,9 @@ async function init() {
   // Load persistent cache
   await loadCache();
   
+  // Load statistics
+  await loadStats();
+  
   // Only proceed if extension is enabled
   if (!extensionEnabled) {
     console.log('Extension is disabled');
@@ -877,7 +1062,7 @@ async function init() {
   
   // Wait a bit for page to fully load
   setTimeout(() => {
-    processUsernames();
+    processUsernamesThrottled();
   }, 2000);
   
   // Set up observer for new content
@@ -890,7 +1075,7 @@ async function init() {
     if (url !== lastUrl) {
       lastUrl = url;
       console.log('Page navigation detected, reprocessing usernames');
-      setTimeout(processUsernames, 2000);
+      setTimeout(processUsernamesThrottled, 2000);
     }
   }).observe(document, { subtree: true, childList: true });
   
