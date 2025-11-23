@@ -620,6 +620,7 @@ async function addFlagToUsername(usernameElement, screenName) {
   const flagSpan = document.createElement('span');
   flagSpan.textContent = ` ${flag}`;
   flagSpan.setAttribute('data-twitter-flag', 'true');
+  flagSpan.setAttribute('title', location); // Show country name on hover
   flagSpan.style.marginLeft = '4px';
   flagSpan.style.marginRight = '4px';
   flagSpan.style.display = 'inline';
