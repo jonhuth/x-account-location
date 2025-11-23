@@ -507,19 +507,15 @@ async function addFlagToUsername(usernameElement, screenName) {
       return;
     }
 
-  // Get flag emoji
+  // Get flag emoji, or use location text as fallback
   const flag = getCountryFlag(location);
-  if (!flag) {
-    console.log(`No flag found for location: ${location}`);
-    // Shimmer already removed above, but ensure it's gone
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
-    usernameElement.dataset.flagAdded = 'failed';
-    return;
-  }
+  const useTextFallback = !flag;
   
-  console.log(`Found flag ${flag} for ${screenName} (${location})`);
+  if (useTextFallback) {
+    console.log(`No flag found for location: ${location}, using text fallback`);
+  } else {
+    console.log(`Found flag ${flag} for ${screenName} (${location})`);
+  }
 
   // Find the username link - try multiple strategies
   // Priority: Find the @username link, not the display name link
@@ -616,11 +612,18 @@ async function addFlagToUsername(usernameElement, screenName) {
     return;
   }
 
-  // Add flag emoji - place it next to verification badge, before @ handle
+  // Add flag emoji or location text - place it next to verification badge, before @ handle
   const flagSpan = document.createElement('span');
-  flagSpan.textContent = ` ${flag}`;
+  if (useTextFallback) {
+    // Show location text as fallback when no flag is available
+    flagSpan.textContent = ` (${location})`;
+    flagSpan.style.fontSize = '0.9em';
+    flagSpan.style.opacity = '0.7';
+  } else {
+    flagSpan.textContent = ` ${flag}`;
+  }
   flagSpan.setAttribute('data-twitter-flag', 'true');
-  flagSpan.setAttribute('title', location); // Show country name on hover
+  flagSpan.setAttribute('title', location); // Show country/region name on hover
   flagSpan.style.marginLeft = '4px';
   flagSpan.style.marginRight = '4px';
   flagSpan.style.display = 'inline';
