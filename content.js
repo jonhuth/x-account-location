@@ -36,6 +36,11 @@ const pendingLocationRequests = new Map();
 const locationStats = new Map(); // Map<location, Set<username>> - in memory for deduplication
 const STATS_KEY = 'location_stats'; // Storage key for statistics (counts only)
 
+// Storage monitoring
+const STORAGE_QUOTA_BYTES = 10 * 1024 * 1024; // 10MB Chrome storage quota
+let lastLoggedStoragePercent = -1; // Track last logged percentage to avoid duplicate logs
+const STORAGE_LOG_THRESHOLD = 90; // Don't allow additions at 90%
+
 // Load enabled state
 async function loadEnabledState() {
   try {
@@ -117,12 +122,50 @@ async function loadCache() {
   }
 }
 
+// Check storage usage and log at 10% increments
+async function checkStorageUsage() {
+  try {
+    if (!chrome.runtime?.id || !chrome.storage?.local?.getBytesInUse) {
+      return null; // Storage API not available
+    }
+    
+    const bytesUsed = await chrome.storage.local.getBytesInUse(null);
+    const percentUsed = Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100);
+    
+    // Log at 10% increments (10%, 20%, 30%, etc.)
+    const logThreshold = Math.floor(percentUsed / 10) * 10;
+    
+    // Always log if we're at or above 90%, or if we've crossed a new 10% threshold
+    const shouldLog = (logThreshold > lastLoggedStoragePercent && logThreshold >= 10) || 
+                      (percentUsed >= STORAGE_LOG_THRESHOLD && lastLoggedStoragePercent < STORAGE_LOG_THRESHOLD);
+    
+    if (shouldLog) {
+      const mbUsed = (bytesUsed / (1024 * 1024)).toFixed(2);
+      const mbQuota = (STORAGE_QUOTA_BYTES / (1024 * 1024)).toFixed(0);
+      console.warn(`📦 Storage usage: ${percentUsed}% (${mbUsed}MB / ${mbQuota}MB)`);
+      lastLoggedStoragePercent = logThreshold;
+    }
+    
+    return percentUsed;
+  } catch (error) {
+    console.error('Error checking storage usage:', error);
+    return null;
+  }
+}
+
 // Save cache to persistent storage
 async function saveCache() {
   try {
     // Check if extension context is still valid
     if (!chrome.runtime?.id) {
       console.log('Extension context invalidated, skipping cache save');
+      return;
+    }
+    
+    // Check storage usage before saving
+    const storagePercent = await checkStorageUsage();
+    if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
+      console.error(`❌ Storage at ${storagePercent}% - cannot save cache. Please upgrade storage method.`);
       return;
     }
     
@@ -143,6 +186,9 @@ async function saveCache() {
     }
     
     await chrome.storage.local.set({ [CACHE_KEY]: cacheObj });
+    
+    // Check storage after saving
+    await checkStorageUsage();
   } catch (error) {
     // Extension context invalidated errors are expected when extension is reloaded
     if (error.message?.includes('Extension context invalidated') || 
@@ -182,12 +228,22 @@ async function saveStats() {
       return;
     }
     
+    // Check storage usage before saving
+    const storagePercent = await checkStorageUsage();
+    if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
+      console.error(`❌ Storage at ${storagePercent}% - cannot save stats. Please upgrade storage method.`);
+      return;
+    }
+    
     const statsObj = {};
     for (const [location, usernames] of locationStats.entries()) {
       statsObj[location] = usernames.size; // Store only count
     }
     
     await chrome.storage.local.set({ [STATS_KEY]: statsObj });
+    
+    // Check storage after saving
+    await checkStorageUsage();
   } catch (error) {
     console.error('Error saving stats:', error);
   }
@@ -221,6 +277,13 @@ async function saveCacheEntry(username, location) {
   // Check if extension context is still valid
   if (!chrome.runtime?.id) {
     console.log('Extension context invalidated, skipping cache entry save');
+    return;
+  }
+  
+  // Check storage usage before adding entry
+  const storagePercent = await checkStorageUsage();
+  if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
+    console.error(`❌ Storage at ${storagePercent}% - cannot add cache entry for ${username}. Please upgrade storage method.`);
     return;
   }
   
@@ -1102,6 +1165,9 @@ async function init() {
   
   // Load statistics
   await loadStats();
+  
+  // Check initial storage usage
+  await checkStorageUsage();
   
   // Only proceed if extension is enabled
   if (!extensionEnabled) {
