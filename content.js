@@ -1,30 +1,50 @@
-// Cache for user locations - persistent storage
-let locationCache = new Map(); // Map<username, {location: string|null, expiry: number}>
+// Configuration constants
+// Cache settings
 const CACHE_KEY = 'twitter_location_cache';
-const CACHE_EXPIRY_DAYS = 30; // Cache for 30 days for valid locations
-const NULL_CACHE_EXPIRY_DAYS = 1; // Cache for 1 day for null entries (no location found)
+const CACHE_EXPIRY_DAYS = 30;
+const NULL_CACHE_EXPIRY_DAYS = 1;
+const CACHE_SAVE_INTERVAL = 5000; // Debounce cache saves (ms)
+const CACHE_PERIODIC_SAVE = 30000; // Periodic save interval (ms)
 
 // Rate limiting
+const MIN_REQUEST_INTERVAL = 3500; // ms between requests
+const MAX_CONCURRENT_REQUESTS = 1;
+const MAX_QUEUE_SIZE = 50;
+const BASE_BACKOFF_MINUTES = 5;
+const REQUEST_TIMEOUT = 10000; // ms
+
+// Storage
+const STORAGE_QUOTA_BYTES = 10 * 1024 * 1024; // 10MB
+const STORAGE_LOG_THRESHOLD = 90; // Don't allow writes at 90%
+
+// Extension state
+const TOGGLE_KEY = 'extension_enabled';
+const DEFAULT_ENABLED = true;
+const STATS_KEY = 'location_stats';
+
+// Processing
+const PROCESS_THROTTLE = 3000; // ms
+const INIT_DELAY = 2000; // ms
+const BATCH_SIZE = 10;
+const BATCH_DELAY = 4000; // ms between requests (slightly more than MIN_REQUEST_INTERVAL)
+
+// Cache for user locations - persistent storage
+let locationCache = new Map(); // Map<username, {location: string|null, expiry: number}>
+
+// Rate limiting state
 const requestQueue = [];
 let isProcessingQueue = false;
 let lastRequestTime = 0;
-const MIN_REQUEST_INTERVAL = 3500; // 3.5 seconds between requests (increased to avoid rate limits)
-const MAX_CONCURRENT_REQUESTS = 1; // Single concurrent request to reduce API load
-const MAX_QUEUE_SIZE = 50; // Maximum queue size to prevent unbounded growth
 let activeRequests = 0;
 let rateLimitResetTime = 0; // Unix timestamp when rate limit resets
 let consecutiveRateLimits = 0; // Track consecutive rate limits for exponential backoff
-const BASE_BACKOFF_MINUTES = 5; // Base wait time in minutes
 
-// Observer for dynamically loaded content
+// Observer state
 let observer = null;
-// IntersectionObserver for visible elements
 let intersectionObserver = null;
 
 // Extension enabled state
 let extensionEnabled = true;
-const TOGGLE_KEY = 'extension_enabled';
-const DEFAULT_ENABLED = true;
 
 // Track pending location requests to avoid duplicate API calls
 // Map<username, Promise<location>> - serves dual purpose:
@@ -34,12 +54,9 @@ const pendingLocationRequests = new Map();
 
 // Statistics tracking - unique profiles per country/region
 const locationStats = new Map(); // Map<location, Set<username>> - in memory for deduplication
-const STATS_KEY = 'location_stats'; // Storage key for statistics (counts only)
 
 // Storage monitoring
-const STORAGE_QUOTA_BYTES = 10 * 1024 * 1024; // 10MB Chrome storage quota
 let lastLoggedStoragePercent = -1; // Track last logged percentage to avoid duplicate logs
-const STORAGE_LOG_THRESHOLD = 90; // Don't allow additions at 90%
 
 // Load enabled state
 async function loadEnabledState() {
@@ -78,8 +95,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Load cache from persistent storage
 async function loadCache() {
   try {
-    // Check if extension context is still valid
-    if (!chrome.runtime?.id) {
+    if (!isExtensionContextValid()) {
       console.log('Extension context invalidated, skipping cache load');
       return;
     }
@@ -122,11 +138,34 @@ async function loadCache() {
   }
 }
 
+function isExtensionContextValid() {
+  return !!chrome.runtime?.id;
+}
+
+function calculateExpiry(location, now = Date.now()) {
+  const days = location === null ? NULL_CACHE_EXPIRY_DAYS : CACHE_EXPIRY_DAYS;
+  return now + (days * 24 * 60 * 60 * 1000);
+}
+
+async function canWriteToStorage() {
+  if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) {
+    return false;
+  }
+  try {
+    const bytesUsed = await chrome.storage.local.getBytesInUse(null);
+    const percentUsed = Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100);
+    return percentUsed < STORAGE_LOG_THRESHOLD;
+  } catch (error) {
+    console.error('Error checking storage:', error);
+    return false;
+  }
+}
+
 // Check storage usage and log at 10% increments
 async function checkStorageUsage() {
   try {
-    if (!chrome.runtime?.id || !chrome.storage?.local?.getBytesInUse) {
-      return null; // Storage API not available
+    if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) {
+      return null;
     }
     
     const bytesUsed = await chrome.storage.local.getBytesInUse(null);
@@ -135,7 +174,7 @@ async function checkStorageUsage() {
     // Log at 10% increments (10%, 20%, 30%, etc.)
     const logThreshold = Math.floor(percentUsed / 10) * 10;
     
-    // Always log if we're at or above 90%, or if we've crossed a new 10% threshold
+    // Always log if we're at or above threshold, or if we've crossed a new 10% threshold
     const shouldLog = (logThreshold > lastLoggedStoragePercent && logThreshold >= 10) || 
                       (percentUsed >= STORAGE_LOG_THRESHOLD && lastLoggedStoragePercent < STORAGE_LOG_THRESHOLD);
     
@@ -153,19 +192,17 @@ async function checkStorageUsage() {
   }
 }
 
-// Save cache to persistent storage
+// Save cache to persistent storage (batch save)
 async function saveCache() {
   try {
-    // Check if extension context is still valid
-    if (!chrome.runtime?.id) {
+    if (!isExtensionContextValid()) {
       console.log('Extension context invalidated, skipping cache save');
       return;
     }
     
-    // Check storage usage before saving
-    const storagePercent = await checkStorageUsage();
-    if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
-      console.error(`❌ Storage at ${storagePercent}% - cannot save cache. Please upgrade storage method.`);
+    if (!(await canWriteToStorage())) {
+      const percent = await checkStorageUsage();
+      console.error(`❌ Storage at ${percent}% - cannot save cache. Please upgrade storage method.`);
       return;
     }
     
@@ -173,11 +210,7 @@ async function saveCache() {
     const now = Date.now();
     
     for (const [username, entry] of locationCache.entries()) {
-      // Use existing expiry if available, otherwise calculate new one
-      const expiry = entry.expiry || (entry.location === null 
-        ? now + (NULL_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
-        : now + (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
-      
+      const expiry = entry.expiry || calculateExpiry(entry.location, now);
       cacheObj[username] = {
         location: entry.location,
         expiry: expiry,
@@ -185,12 +218,19 @@ async function saveCache() {
       };
     }
     
-    await chrome.storage.local.set({ [CACHE_KEY]: cacheObj });
+    // Save cache and stats together
+    const statsObj = {};
+    for (const [location, usernames] of locationStats.entries()) {
+      statsObj[location] = usernames.size;
+    }
     
-    // Check storage after saving
+    await chrome.storage.local.set({
+      [CACHE_KEY]: cacheObj,
+      [STATS_KEY]: statsObj
+    });
+    
     await checkStorageUsage();
   } catch (error) {
-    // Extension context invalidated errors are expected when extension is reloaded
     if (error.message?.includes('Extension context invalidated') || 
         error.message?.includes('message port closed')) {
       console.log('Extension context invalidated, cache save skipped');
@@ -203,7 +243,7 @@ async function saveCache() {
 // Load statistics from persistent storage
 async function loadStats() {
   try {
-    if (!chrome.runtime?.id) {
+    if (!isExtensionContextValid()) {
       console.log('Extension context invalidated, skipping stats load');
       return;
     }
@@ -220,34 +260,6 @@ async function loadStats() {
   }
 }
 
-// Save statistics to persistent storage (counts only)
-async function saveStats() {
-  try {
-    if (!chrome.runtime?.id) {
-      console.log('Extension context invalidated, skipping stats save');
-      return;
-    }
-    
-    // Check storage usage before saving
-    const storagePercent = await checkStorageUsage();
-    if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
-      console.error(`❌ Storage at ${storagePercent}% - cannot save stats. Please upgrade storage method.`);
-      return;
-    }
-    
-    const statsObj = {};
-    for (const [location, usernames] of locationStats.entries()) {
-      statsObj[location] = usernames.size; // Store only count
-    }
-    
-    await chrome.storage.local.set({ [STATS_KEY]: statsObj });
-    
-    // Check storage after saving
-    await checkStorageUsage();
-  } catch (error) {
-    console.error('Error saving stats:', error);
-  }
-}
 
 // Update statistics when a location is cached
 function updateStats(username, location) {
@@ -262,39 +274,20 @@ function updateStats(username, location) {
   const usernames = locationStats.get(location);
   if (!usernames.has(username)) {
     usernames.add(username);
-    // Debounce stats save - save every 2 seconds for real-time popup updates
-    if (!saveStats.timeout) {
-      saveStats.timeout = setTimeout(async () => {
-        await saveStats();
-        saveStats.timeout = null;
-      }, 2000);
-    }
+    // Stats will be saved with cache (debounced)
   }
 }
 
-// Save a single entry to cache
-async function saveCacheEntry(username, location) {
-  // Check if extension context is still valid
-  if (!chrome.runtime?.id) {
-    console.log('Extension context invalidated, skipping cache entry save');
-    return;
-  }
-  
-  // Check storage usage before adding entry
-  const storagePercent = await checkStorageUsage();
-  if (storagePercent !== null && storagePercent >= STORAGE_LOG_THRESHOLD) {
-    console.error(`❌ Storage at ${storagePercent}% - cannot add cache entry for ${username}. Please upgrade storage method.`);
+// Add a single entry to cache and trigger debounced save
+function saveCacheEntry(username, location) {
+  if (!isExtensionContextValid()) {
     return;
   }
   
   const now = Date.now();
-  const expiry = location === null
-    ? now + (NULL_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
-    : now + (CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
-  
   locationCache.set(username, {
     location: location,
-    expiry: expiry,
+    expiry: calculateExpiry(location, now),
     cachedAt: now
   });
   
@@ -303,12 +296,12 @@ async function saveCacheEntry(username, location) {
     updateStats(username, location);
   }
   
-  // Debounce saves - only save every 5 seconds
+  // Debounce saves
   if (!saveCache.timeout) {
     saveCache.timeout = setTimeout(async () => {
       await saveCache();
       saveCache.timeout = null;
-    }, 5000);
+    }, CACHE_SAVE_INTERVAL);
   }
 }
 
@@ -341,6 +334,20 @@ function injectPageScript() {
   });
 }
 
+function isRateLimited() {
+  if (rateLimitResetTime === 0) return false;
+  const now = Math.floor(Date.now() / 1000);
+  return now < rateLimitResetTime;
+}
+
+function resetRateLimit() {
+  if (consecutiveRateLimits > 0) {
+    console.log(`✅ Rate limit cleared after ${consecutiveRateLimits} consecutive limit${consecutiveRateLimits > 1 ? 's' : ''}. Resuming normal operation.`);
+  }
+  rateLimitResetTime = 0;
+  consecutiveRateLimits = 0;
+}
+
 // Process request queue with rate limiting
 async function processRequestQueue() {
   if (isProcessingQueue || requestQueue.length === 0) {
@@ -348,30 +355,26 @@ async function processRequestQueue() {
   }
   
   // Check if we're rate limited
-  if (rateLimitResetTime > 0) {
+  if (isRateLimited()) {
     const now = Math.floor(Date.now() / 1000);
-    if (now < rateLimitResetTime) {
-      const waitTime = (rateLimitResetTime - now) * 1000;
-      const waitMinutes = Math.ceil(waitTime / 1000 / 60);
-      console.log(`⏸️  Rate limited. Waiting ${waitMinutes} minutes... (${consecutiveRateLimits} consecutive rate limit${consecutiveRateLimits > 1 ? 's' : ''})`);
-      // Clean up queue on rate limit - reject pending requests
-      while (requestQueue.length > 0) {
-        const { reject } = requestQueue.shift();
-        reject(new Error('Rate limited'));
-      }
-      setTimeout(processRequestQueue, Math.min(waitTime, 60000)); // Check every minute max
-      return;
-    } else {
-      // Rate limit expired, reset counters
-      if (consecutiveRateLimits > 0) {
-        console.log(`✅ Rate limit cleared after ${consecutiveRateLimits} consecutive limit${consecutiveRateLimits > 1 ? 's' : ''}. Resuming normal operation.`);
-      }
-      rateLimitResetTime = 0;
-      consecutiveRateLimits = 0;
+    const waitTime = (rateLimitResetTime - now) * 1000;
+    const waitMinutes = Math.ceil(waitTime / 1000 / 60);
+    console.log(`⏸️  Rate limited. Waiting ${waitMinutes} minutes... (${consecutiveRateLimits} consecutive rate limit${consecutiveRateLimits > 1 ? 's' : ''})`);
+    
+    // Reject pending requests
+    while (requestQueue.length > 0) {
+      requestQueue.shift().reject(new Error('Rate limited'));
     }
+    
+    setTimeout(processRequestQueue, Math.min(waitTime, 60000));
+    return;
   }
   
-  // Log queue status
+  // Rate limit expired, reset if needed
+  if (rateLimitResetTime > 0) {
+    resetRateLimit();
+  }
+  
   if (requestQueue.length > 0) {
     console.log(`Processing queue: ${requestQueue.length} requests pending, ${activeRequests} active`);
   }
@@ -392,23 +395,20 @@ async function processRequestQueue() {
     lastRequestTime = Date.now();
     
     // Make the request
-    makeLocationRequest(screenName)
-      .then(location => {
-        // Successful request - reset consecutive rate limit counter
-        if (consecutiveRateLimits > 0) {
-          console.log(`✅ Successful request after ${consecutiveRateLimits} rate limit${consecutiveRateLimits > 1 ? 's' : ''}. Resetting backoff.`);
-          consecutiveRateLimits = 0;
-        }
-        resolve(location);
-      })
-      .catch(error => {
-        reject(error);
-      })
-      .finally(() => {
-        activeRequests--;
-        // Continue processing queue
-        setTimeout(processRequestQueue, 200);
-      });
+    try {
+      const location = await makeLocationRequest(screenName);
+      // Successful request - reset consecutive rate limit counter
+      if (consecutiveRateLimits > 0) {
+        console.log(`✅ Successful request after ${consecutiveRateLimits} rate limit${consecutiveRateLimits > 1 ? 's' : ''}. Resetting backoff.`);
+        consecutiveRateLimits = 0;
+      }
+      resolve(location);
+    } catch (error) {
+      reject(error);
+    } finally {
+      activeRequests--;
+      setTimeout(processRequestQueue, 200);
+    }
   }
   
   isProcessingQueue = false;
@@ -451,7 +451,7 @@ function makeLocationRequest(screenName) {
       requestId
     }, '*');
     
-    // Timeout after 10 seconds
+    // Timeout
     setTimeout(() => {
       window.removeEventListener('message', handler);
       // Remove from pending requests on timeout
@@ -459,25 +459,21 @@ function makeLocationRequest(screenName) {
       // Don't cache timeout failures - allow retry
       console.log(`Request timeout for ${screenName}, not caching`);
       resolve(null);
-    }, 10000);
+    }, REQUEST_TIMEOUT);
   });
 }
 
-// Helper function to get location info (flag || country || region)
-// Returns: { location: string|null, flag: string|null, displayText: string }
-function getLocationInfo(location) {
+// Helper: Convert location string to location info object
+function createLocationInfo(location) {
   if (!location) {
     return { location: null, flag: null, displayText: null };
   }
-  
   const flag = getCountryFlag(location);
-  
-  if (flag) {
-    return { location, flag, displayText: flag };
-  } else {
-    // No flag found, use location text as fallback
-    return { location, flag: null, displayText: `(${location})` };
-  }
+  return {
+    location,
+    flag,
+    displayText: flag || `(${location})`
+  };
 }
 
 // Get location for a username (checks cache first, then API)
@@ -488,41 +484,38 @@ async function getLocation(screenName) {
     const cached = locationCache.get(screenName);
     const now = Date.now();
     
-    // Check if cache entry is expired
     if (cached.expiry && cached.expiry > now) {
-      // Cache is valid, return location info
-      const locationInfo = getLocationInfo(cached.location);
+      const locationInfo = createLocationInfo(cached.location);
       const display = locationInfo.flag || locationInfo.displayText || 'null';
       console.log(`✅ CACHE HIT: @${screenName} → ${display} (${cached.location || 'no location'})`);
       return locationInfo;
-    } else {
-      // Cache expired, remove it
-      console.log(`⏰ Cache expired for ${screenName}, removing`);
-      locationCache.delete(screenName);
     }
+    
+    // Cache expired, remove it
+    console.log(`⏰ Cache expired for ${screenName}, removing`);
+    locationCache.delete(screenName);
   }
   
   // Check if there's already a pending request for this username
   if (pendingLocationRequests.has(screenName)) {
     console.log(`⏳ Waiting for pending request for @${screenName}`);
     const location = await pendingLocationRequests.get(screenName);
+    
     // After waiting, check cache again - it might have been updated
     if (locationCache.has(screenName)) {
       const cached = locationCache.get(screenName);
-      const now = Date.now();
-      if (cached.expiry && cached.expiry > now) {
-        const locationInfo = getLocationInfo(cached.location);
+      if (cached.expiry && cached.expiry > Date.now()) {
+        const locationInfo = createLocationInfo(cached.location);
         const display = locationInfo.flag || locationInfo.displayText || 'null';
         console.log(`✅ CACHE HIT (after wait): @${screenName} → ${display}`);
         return locationInfo;
       }
     }
-    // Return the location from the pending request
-    return getLocationInfo(location);
+    
+    return createLocationInfo(location);
   }
   
   // Not in cache or expired, need to fetch from API
-  // Check if queue is full
   if (requestQueue.length >= MAX_QUEUE_SIZE) {
     console.warn(`Queue full (${requestQueue.length}/${MAX_QUEUE_SIZE}), rejecting request for ${screenName}`);
     return { location: null, flag: null, displayText: null };
@@ -535,12 +528,10 @@ async function getLocation(screenName) {
     requestQueue.push({ 
       screenName, 
       resolve: (location) => {
-        // Remove from pending requests when resolved
         pendingLocationRequests.delete(screenName);
         resolve(location);
       }, 
       reject: (error) => {
-        // Remove from pending requests when rejected
         pendingLocationRequests.delete(screenName);
         reject(error);
       }
@@ -548,14 +539,45 @@ async function getLocation(screenName) {
     processRequestQueue();
   });
   
-  // Store the promise so other calls can wait for it
   pendingLocationRequests.set(screenName, locationPromise);
-  
-  // Wait for the API request
   const location = await locationPromise;
+  return createLocationInfo(location);
+}
+
+// Helper: Parse username from href
+function parseUsernameFromLink(href) {
+  if (!href) return null;
+  const match = href.match(/^\/([^\/\?]+)/);
+  return match && match[1] ? match[1] : null;
+}
+
+// Helper: Check if a string is a valid username
+function isValidUsername(username) {
+  if (!username || username.length === 0 || username.length >= 20) return false;
   
-  // Return location info with flag/country/region logic
-  return getLocationInfo(location);
+  const excludedRoutes = ['home', 'explore', 'notifications', 'messages', 'i', 'compose', 'search', 
+                         'settings', 'bookmarks', 'lists', 'communities', 'hashtag'];
+  if (excludedRoutes.includes(username) || username.startsWith('hashtag') || username.startsWith('search')) {
+    return false;
+  }
+  
+  if (username.includes('status') || /^\d+$/.test(username)) {
+    return false;
+  }
+  
+  return true;
+}
+
+// Helper: Check if link text indicates username
+function isUsernameLink(link, potentialUsername) {
+  const text = link.textContent?.trim() || '';
+  const linkText = text.toLowerCase();
+  const usernameLower = potentialUsername.toLowerCase();
+  
+  return text.startsWith('@') || 
+         linkText === usernameLower || 
+         linkText === `@${usernameLower}` ||
+         (text.trim().startsWith('@') && text.trim().substring(1) === potentialUsername);
 }
 
 // Function to extract username from various Twitter UI elements
@@ -563,21 +585,10 @@ function extractUsername(element) {
   // Try data-testid="UserName" or "User-Name" first (most reliable)
   const usernameElement = element.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   if (usernameElement) {
-    const links = usernameElement.querySelectorAll('a[href^="/"]');
-    for (const link of links) {
-      const href = link.getAttribute('href');
-      const match = href.match(/^\/([^\/\?]+)/);
-      if (match && match[1]) {
-        const username = match[1];
-        // Filter out common routes
-        const excludedRoutes = ['home', 'explore', 'notifications', 'messages', 'i', 'compose', 'search', 'settings', 'bookmarks', 'lists', 'communities'];
-        if (!excludedRoutes.includes(username) && 
-            !username.startsWith('hashtag') &&
-            !username.startsWith('search') &&
-            username.length > 0 &&
-            username.length < 20) { // Usernames are typically short
-          return username;
-        }
+    for (const link of usernameElement.querySelectorAll('a[href^="/"]')) {
+      const username = parseUsernameFromLink(link.getAttribute('href'));
+      if (username && isValidUsername(username)) {
+        return username;
       }
     }
   }
@@ -587,91 +598,90 @@ function extractUsername(element) {
   const seenUsernames = new Set();
   
   for (const link of allLinks) {
-    const href = link.getAttribute('href');
-    if (!href) continue;
-    
-    const match = href.match(/^\/([^\/\?]+)/);
-    if (!match || !match[1]) continue;
-    
-    const potentialUsername = match[1];
-    
-    // Skip if we've already checked this username
-    if (seenUsernames.has(potentialUsername)) continue;
-    seenUsernames.add(potentialUsername);
-    
-    // Filter out routes and invalid usernames
-    const excludedRoutes = ['home', 'explore', 'notifications', 'messages', 'i', 'compose', 'search', 'settings', 'bookmarks', 'lists', 'communities', 'hashtag'];
-    if (excludedRoutes.some(route => potentialUsername === route || potentialUsername.startsWith(route))) {
+    const username = parseUsernameFromLink(link.getAttribute('href'));
+    if (!username || seenUsernames.has(username) || !isValidUsername(username)) {
       continue;
     }
+    seenUsernames.add(username);
     
-    // Skip status/tweet links
-    if (potentialUsername.includes('status') || potentialUsername.match(/^\d+$/)) {
-      continue;
+    // Check if link text indicates it's a username
+    if (isUsernameLink(link, username)) {
+      return username;
     }
     
-    // Check link text/content for username indicators
-    const text = link.textContent?.trim() || '';
-    const linkText = text.toLowerCase();
-    const usernameLower = potentialUsername.toLowerCase();
-    
-    // If link text starts with @, it's definitely a username
-    if (text.startsWith('@')) {
-      return potentialUsername;
-    }
-    
-    // If link text matches the username (without @), it's likely a username
-    if (linkText === usernameLower || linkText === `@${usernameLower}`) {
-      return potentialUsername;
-    }
-    
-    // Check if link is in a UserName container or has username-like structure
+    // Check if link is in a UserName container
     const parent = link.closest('[data-testid="UserName"], [data-testid="User-Name"]');
-    if (parent) {
-      // If it's in a UserName container and looks like a username, return it
-      if (potentialUsername.length > 0 && potentialUsername.length < 20 && !potentialUsername.includes('/')) {
-        return potentialUsername;
-      }
-    }
-    
-    // Also check if link text is @username format
-    if (text && text.trim().startsWith('@')) {
-      const atUsername = text.trim().substring(1);
-      if (atUsername === potentialUsername) {
-        return potentialUsername;
-      }
+    if (parent && !username.includes('/')) {
+      return username;
     }
   }
   
   // Last resort: look for @username pattern in text content and verify with link
   const textContent = element.textContent || '';
-  const atMentionMatches = textContent.matchAll(/@([a-zA-Z0-9_]+)/g);
-  for (const match of atMentionMatches) {
+  for (const match of textContent.matchAll(/@([a-zA-Z0-9_]+)/g)) {
     const username = match[1];
-    // Verify it's actually a link in a User-Name container
     const link = element.querySelector(`a[href="/${username}"], a[href^="/${username}?"]`);
-    if (link) {
-      // Make sure it's in a username context, not just mentioned in tweet text
-      const isInUserNameContainer = link.closest('[data-testid="UserName"], [data-testid="User-Name"]');
-      if (isInUserNameContainer) {
-        return username;
-      }
+    if (link && link.closest('[data-testid="UserName"], [data-testid="User-Name"]')) {
+      return username;
     }
   }
   
   return null;
 }
 
-// Helper function to find handle section
+// Helper: Find handle section
 function findHandleSection(container, screenName) {
   return Array.from(container.querySelectorAll('div')).find(div => {
     const link = div.querySelector(`a[href="/${screenName}"]`);
-    if (link) {
-      const text = link.textContent?.trim();
-      return text === `@${screenName}`;
-    }
-    return false;
+    return link && link.textContent?.trim() === `@${screenName}`;
   });
+}
+
+// Helper: Try to insert flag element into container
+function insertFlagElement(container, flagSpan, screenName) {
+  const handleSection = findHandleSection(container, screenName);
+  
+  // Strategy 1: Insert before handle section if it exists and is direct child
+  if (handleSection && handleSection.parentNode === container) {
+    try {
+      container.insertBefore(flagSpan, handleSection);
+      return true;
+    } catch (e) {
+      // Continue to next strategy
+    }
+  }
+  
+  // Strategy 2: Insert before handle section's parent if different from container
+  if (handleSection?.parentNode && handleSection.parentNode !== container) {
+    try {
+      handleSection.parentNode.insertBefore(flagSpan, handleSection);
+      return true;
+    } catch (e) {
+      // Continue to next strategy
+    }
+  }
+  
+  // Strategy 3: Insert after display name link if available
+  const displayNameLink = container.querySelector('a[href^="/"]');
+  if (displayNameLink) {
+    const displayContainer = displayNameLink.closest('div');
+    if (displayContainer?.parentNode) {
+      try {
+        displayContainer.parentNode.insertBefore(flagSpan, displayContainer.nextSibling);
+        return true;
+      } catch (e) {
+        // Continue to fallback
+      }
+    }
+  }
+  
+  // Strategy 4: Fallback - append to container
+  try {
+    container.appendChild(flagSpan);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 // Create loading shimmer placeholder
@@ -716,6 +726,11 @@ async function addFlagToUsername(usernameElement, screenName) {
     return;
   }
 
+  // Check cache FIRST before making any API calls
+  if (addFlagFromCache(usernameElement, screenName)) {
+    return; // Already added from cache
+  }
+
   // Check if this username is already being processed (prevent duplicate API calls)
   if (pendingLocationRequests.has(screenName)) {
     // Wait for the pending request to complete
@@ -753,21 +768,16 @@ async function addFlagToUsername(usernameElement, screenName) {
   if (userNameContainer) {
     // Try to insert shimmer before handle section (same place flag will go)
     const handleSection = findHandleSection(userNameContainer, screenName);
-    if (handleSection && handleSection.parentNode) {
+    if (handleSection?.parentNode) {
       try {
         handleSection.parentNode.insertBefore(shimmerSpan, handleSection);
         shimmerInserted = true;
       } catch (e) {
-        // Fallback: insert at end of container
-        try {
-          userNameContainer.appendChild(shimmerSpan);
-          shimmerInserted = true;
-        } catch (e2) {
-          console.log('Failed to insert shimmer');
-        }
+        // Fallback
       }
-    } else {
-      // Fallback: insert at end of container
+    }
+    // Fallback: append to container
+    if (!shimmerInserted) {
       try {
         userNameContainer.appendChild(shimmerSpan);
         shimmerInserted = true;
@@ -854,19 +864,18 @@ function processUsernamesThrottled() {
   processUsernamesThrottleTimeout = setTimeout(() => {
     processUsernames();
     processUsernamesThrottleTimeout = null;
-  }, 3000); // 3 second throttle
+  }, PROCESS_THROTTLE);
 }
 
 // Helper function to add flag to element
 function addFlagToElement(usernameElement, screenName, locationInfo) {
   // Check if flag already exists
-  const existingFlag = usernameElement.querySelector('[data-twitter-flag]');
-  if (existingFlag) {
-    return true; // Already added
+  if (usernameElement.querySelector('[data-twitter-flag]')) {
+    return true;
   }
   
-  if (!locationInfo || !locationInfo.location) {
-    return false; // No location to display
+  if (!locationInfo?.location) {
+    return false;
   }
   
   // Find the User-Name container
@@ -875,91 +884,25 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
     return false;
   }
   
-  // Create flag span with flag || country || region
+  // Create flag span
   const flagSpan = document.createElement('span');
   flagSpan.textContent = ` ${locationInfo.displayText}`;
   flagSpan.setAttribute('data-twitter-flag', 'true');
   flagSpan.setAttribute('title', locationInfo.location);
-  flagSpan.style.marginLeft = '4px';
-  flagSpan.style.marginRight = '4px';
-  flagSpan.style.display = 'inline';
-  flagSpan.style.color = 'inherit';
-  flagSpan.style.verticalAlign = 'middle';
+  Object.assign(flagSpan.style, {
+    marginLeft: '4px',
+    marginRight: '4px',
+    display: 'inline',
+    color: 'inherit',
+    verticalAlign: 'middle',
+    fontSize: locationInfo.flag ? 'inherit' : '0.9em',
+    opacity: locationInfo.flag ? '1' : '0.7'
+  });
   
-  // Style text fallback differently
-  if (!locationInfo.flag) {
-    flagSpan.style.fontSize = '0.9em';
-    flagSpan.style.opacity = '0.7';
-  }
-  
-  // Find the handle section
-  const handleSection = findHandleSection(containerForFlag, screenName);
-  
-  let inserted = false;
-  
-  // Strategy 1: Insert right before the handle section
-  if (handleSection && handleSection.parentNode === containerForFlag) {
-    try {
-      containerForFlag.insertBefore(flagSpan, handleSection);
-      inserted = true;
-    } catch (e) {
-      // Continue to next strategy
-    }
-  }
-  
-  // Strategy 2: Insert before handle section's parent
-  if (!inserted && handleSection && handleSection.parentNode) {
-    try {
-      const handleParent = handleSection.parentNode;
-      if (handleParent !== containerForFlag && handleParent.parentNode) {
-        handleParent.parentNode.insertBefore(flagSpan, handleParent);
-        inserted = true;
-      } else if (handleParent === containerForFlag) {
-        containerForFlag.insertBefore(flagSpan, handleSection);
-        inserted = true;
-      }
-    } catch (e) {
-      // Continue to next strategy
-    }
-  }
-  
-  // Strategy 3: Insert after display name container
-  if (!inserted && handleSection) {
-    try {
-      const displayNameLink = containerForFlag.querySelector('a[href^="/"]');
-      if (displayNameLink) {
-        const displayNameContainer = displayNameLink.closest('div');
-        if (displayNameContainer && displayNameContainer.parentNode) {
-          if (displayNameContainer.parentNode === handleSection.parentNode) {
-            displayNameContainer.parentNode.insertBefore(flagSpan, handleSection);
-            inserted = true;
-          } else {
-            displayNameContainer.parentNode.insertBefore(flagSpan, displayNameContainer.nextSibling);
-            inserted = true;
-          }
-        }
-      }
-    } catch (e) {
-      // Continue to fallback
-    }
-  }
-  
-  // Strategy 4: Fallback - append to container
-  if (!inserted) {
-    try {
-      containerForFlag.appendChild(flagSpan);
-      inserted = true;
-    } catch (e) {
-      return false;
-    }
-  }
-  
-  if (inserted) {
+  // Try to insert flag
+  if (insertFlagElement(containerForFlag, flagSpan, screenName)) {
     usernameElement.dataset.flagAdded = 'true';
-    // Update statistics
-    if (locationInfo.location) {
-      updateStats(screenName, locationInfo.location);
-    }
+    updateStats(screenName, locationInfo.location);
     return true;
   }
   
@@ -968,19 +911,17 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
 
 // Check cache and add flag immediately if cached
 function addFlagFromCache(container, screenName) {
-  if (locationCache.has(screenName)) {
-    const cached = locationCache.get(screenName);
-    const now = Date.now();
-    
-    // Check if cache entry is expired
-    if (cached.expiry && cached.expiry > now && cached.location !== null) {
-      // Cache is valid, get location info and add flag immediately
-      const locationInfo = getLocationInfo(cached.location);
-      if (addFlagToElement(container, screenName, locationInfo)) {
-        const display = locationInfo.flag || locationInfo.displayText || 'null';
-        console.log(`✅ CACHE HIT (display): @${screenName} → ${display}`);
-        return true;
-      }
+  if (!locationCache.has(screenName)) return false;
+  
+  const cached = locationCache.get(screenName);
+  const now = Date.now();
+  
+  if (cached.expiry && cached.expiry > now && cached.location !== null) {
+    const locationInfo = createLocationInfo(cached.location);
+    if (addFlagToElement(container, screenName, locationInfo)) {
+      const display = locationInfo.flag || locationInfo.displayText || 'null';
+      console.log(`✅ CACHE HIT (display): @${screenName} → ${display}`);
+      return true;
     }
   }
   return false;
@@ -1035,21 +976,51 @@ async function processVisibleUsernames(containers) {
   console.log(`Found ${cachedCount} cached accounts, ${uncachedContainers.length} need API calls`);
   
   // Second pass: Process uncached containers in batches (API calls)
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < uncachedContainers.length; i += BATCH_SIZE) {
-    const batch = uncachedContainers.slice(i, i + BATCH_SIZE);
-    for (const container of batch) {
-      const screenName = extractUsername(container);
-      if (screenName) {
-        addFlagToUsername(container, screenName).catch(err => {
-          console.error(`Error processing ${screenName}:`, err);
-          container.dataset.flagAdded = 'failed';
-        });
+  // Deduplicate usernames to avoid duplicate API calls
+  const uniqueUsernames = new Map(); // Map<screenName, containers[]>
+  for (const container of uncachedContainers) {
+    const screenName = extractUsername(container);
+    if (screenName) {
+      if (!uniqueUsernames.has(screenName)) {
+        uniqueUsernames.set(screenName, []);
+      }
+      uniqueUsernames.get(screenName).push(container);
+    }
+  }
+  
+  const uniqueUsernameList = Array.from(uniqueUsernames.keys());
+  console.log(`Processing ${uniqueUsernameList.length} unique usernames (from ${uncachedContainers.length} containers)`);
+  
+  // Process unique usernames one at a time to respect rate limits
+  for (let i = 0; i < uniqueUsernameList.length; i++) {
+    const screenName = uniqueUsernameList[i];
+    const containers = uniqueUsernames.get(screenName);
+    
+    // Process first container (will trigger API call if needed)
+    if (containers.length > 0) {
+      await addFlagToUsername(containers[0], screenName).catch(err => {
+        console.error(`Error processing ${screenName}:`, err);
+        containers.forEach(c => c.dataset.flagAdded = 'failed');
+      });
+      
+      // If successful, add flag to other containers with same username from cache
+      if (containers[0].dataset.flagAdded === 'true' && containers.length > 1) {
+        // Get location info from cache (should be available now)
+        if (locationCache.has(screenName)) {
+          const cached = locationCache.get(screenName);
+          if (cached.expiry && cached.expiry > Date.now() && cached.location) {
+            const locationInfo = createLocationInfo(cached.location);
+            for (let j = 1; j < containers.length; j++) {
+              addFlagToElement(containers[j], screenName, locationInfo);
+            }
+          }
+        }
       }
     }
-    // Wait between batches to avoid overwhelming the API
-    if (i + BATCH_SIZE < uncachedContainers.length) {
-      await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Wait between requests to respect rate limits (except for last one)
+    if (i < uniqueUsernameList.length - 1) {
+      await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
     }
   }
   
@@ -1121,84 +1092,59 @@ async function processUsernames() {
   await processVisibleUsernames(containers);
 }
 
-// Initialize observer for dynamically loaded content
-function initObserver() {
+// Setup observers for dynamically loaded content
+function setupObservers() {
+  // MutationObserver for new content
   if (observer) {
     observer.disconnect();
   }
-
+  
   observer = new MutationObserver((mutations) => {
-    // Don't process if extension is disabled
-    if (!extensionEnabled) {
-      return;
-    }
-    
-    let shouldProcess = false;
-    for (const mutation of mutations) {
-      if (mutation.addedNodes.length > 0) {
-        shouldProcess = true;
-        break;
-      }
-    }
-    
-    if (shouldProcess) {
-      // Throttle processing to reduce API calls
+    // Check if any mutations added nodes (extension enabled check is in processUsernames)
+    if (mutations.some(m => m.addedNodes.length > 0)) {
       processUsernamesThrottled();
     }
   });
-
+  
   observer.observe(document.body, {
     childList: true,
     subtree: true
   });
-}
-
-// Main initialization
-async function init() {
-  console.log('Twitter Location Flag extension initialized');
   
-  // Load enabled state first
-  await loadEnabledState();
-  
-  // Load persistent cache
-  await loadCache();
-  
-  // Load statistics
-  await loadStats();
-  
-  // Check initial storage usage
-  await checkStorageUsage();
-  
-  // Only proceed if extension is enabled
-  if (!extensionEnabled) {
-    console.log('Extension is disabled');
-    return;
-  }
-  
-  // Inject page script
-  injectPageScript();
-  
-  // Wait a bit for page to fully load
-  setTimeout(() => {
-    processUsernamesThrottled();
-  }, 2000);
-  
-  // Set up observer for new content
-  initObserver();
-  
-  // Re-process on navigation (Twitter uses SPA)
+  // Navigation observer for SPA navigation
   let lastUrl = location.href;
   new MutationObserver(() => {
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
       console.log('Page navigation detected, reprocessing usernames');
-      setTimeout(processUsernamesThrottled, 2000);
+      setTimeout(processUsernamesThrottled, INIT_DELAY);
     }
   }).observe(document, { subtree: true, childList: true });
+}
+
+// Main initialization
+async function init() {
+  console.log('Twitter Location Flag extension initialized');
   
-  // Save cache periodically
-  setInterval(saveCache, 30000); // Save every 30 seconds
+  await loadEnabledState();
+  await loadCache();
+  await loadStats();
+  await checkStorageUsage();
+  
+  if (!extensionEnabled) {
+    console.log('Extension is disabled');
+    return;
+  }
+  
+  injectPageScript();
+  setupObservers();
+  
+  setTimeout(() => {
+    processUsernamesThrottled();
+  }, INIT_DELAY);
+  
+  setInterval(saveCache, CACHE_PERIODIC_SAVE);
 }
 
 // Wait for page to load

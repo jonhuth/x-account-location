@@ -74,22 +74,15 @@ const COUNTRY_FLAGS = {
   "Vietnam": "🇻🇳"
 };
 
+const COUNTRY_FLAGS_LOWER = {};
+for (const [country, flag] of Object.entries(COUNTRY_FLAGS)) {
+  COUNTRY_FLAGS_LOWER[country.toLowerCase()] = flag;
+}
+
 function getCountryFlag(countryName) {
   if (!countryName) return null;
   
-  // Try exact match first
-  if (COUNTRY_FLAGS[countryName]) {
-    return COUNTRY_FLAGS[countryName];
-  }
-  
-  // Try case-insensitive match
-  const normalized = countryName.trim();
-  for (const [country, flag] of Object.entries(COUNTRY_FLAGS)) {
-    if (country.toLowerCase() === normalized.toLowerCase()) {
-      return flag;
-    }
-  }
-  
-  return null;
+  const normalized = countryName.trim().toLowerCase();
+  return COUNTRY_FLAGS_LOWER[normalized] || null;
 }
 
