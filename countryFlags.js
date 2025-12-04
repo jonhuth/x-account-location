@@ -37,6 +37,7 @@ const COUNTRY_FLAGS = {
   "Japan": "🇯🇵",
   "Jordan": "🇯🇴",
   "Kenya": "🇰🇪",
+  "Latvia": "🇱🇻",
   "Malaysia": "🇲🇾",
   "Morocco": "🇲🇦",
   "Mexico": "🇲🇽",
