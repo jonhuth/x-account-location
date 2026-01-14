@@ -154,6 +154,68 @@
       color: #536471;
       font-style: italic;
     }
+
+    .tools-container {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #eff3f4;
+    }
+
+    .tools-header {
+      font-weight: 600;
+      color: #0f1419;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    .action-btn {
+      width: 100%;
+      padding: 10px 12px;
+      background-color: #1d9bf0;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background-color 0.2s;
+    }
+
+    .action-btn:hover {
+      background-color: #1a8cd8;
+    }
+
+    .action-btn:active {
+      background-color: #1881c4;
+    }
+
+    .action-btn:disabled {
+      background-color: #8ecdf8;
+      cursor: not-allowed;
+    }
+
+    .action-status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #536471;
+      text-align: center;
+      min-height: 16px;
+    }
+
+    .action-status.success {
+      color: #00ba7c;
+    }
+
+    .action-status.error {
+      color: #f4212e;
+    }
+
+    .interests-info {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #536471;
+      text-align: center;
+    }
   </style>
 </head>
 
@@ -182,7 +244,15 @@
     <div class="stats-list" id="statsList"></div>
   </div>
 
+  <div class="tools-container">
+    <div class="tools-header">Tools</div>
+    <button class="action-btn" id="cleanInterestsBtn">Clean Interests</button>
+    <div class="action-status" id="cleanStatus"></div>
+    <div class="interests-info">Removes all interests, then sets your preferred ones.</div>
+  </div>
+
   <script src="countryFlags.js"></script>
+  <script src="myInterests.js"></script>
   <script src="popup.js"></script>
 </body>
 
