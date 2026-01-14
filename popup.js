@@ -172,6 +172,7 @@ function cleanInterests(myInterests) {
   const myInterestsLower = myInterests.map(i => i.toLowerCase());
   let uncheckedCount = 0;
   let checkedCount = 0;
+  const processedCheckboxes = new Set(); // Track which checkboxes we've already processed
   
   // Get the label/text associated with a checkbox
   function getCheckboxLabel(checkbox) {
@@ -202,41 +203,55 @@ function cleanInterests(myInterests) {
   }
   
   // Check if an interest label matches any of our preferred interests
+  // Only matches if the label exactly equals one of your interests (case-insensitive)
   function isMyInterest(label) {
-    const labelLower = label.toLowerCase();
-    return myInterestsLower.some(interest => 
-      labelLower.includes(interest) || interest.includes(labelLower)
-    );
+    const labelLower = label.toLowerCase().trim();
+    return myInterestsLower.some(interest => labelLower === interest);
   }
   
   function processCheckboxes() {
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
     let delay = 0;
+    let actionsQueued = 0;
     
     checkboxes.forEach((checkbox) => {
       const label = getCheckboxLabel(checkbox);
+      
+      // Skip if we've already processed this checkbox (by label)
+      if (processedCheckboxes.has(label)) {
+        return;
+      }
+      
       const isChecked = checkbox.checked;
       const shouldBeChecked = isMyInterest(label);
       
       // If it's checked but shouldn't be, uncheck it
       if (isChecked && !shouldBeChecked) {
+        processedCheckboxes.add(label);
         setTimeout(() => {
           checkbox.click();
           uncheckedCount++;
           console.log(`Unchecked: "${label}"`);
         }, delay);
-        delay += 200 + Math.random() * 150;
+        delay += 800 + Math.random() * 400; // Slower: 800-1200ms between clicks
+        actionsQueued++;
       }
       // If it's not checked but should be, check it
       else if (!isChecked && shouldBeChecked) {
+        processedCheckboxes.add(label);
         setTimeout(() => {
           checkbox.click();
           checkedCount++;
           console.log(`Checked: "${label}"`);
         }, delay);
-        delay += 200 + Math.random() * 150;
+        delay += 800 + Math.random() * 400; // Slower: 800-1200ms between clicks
+        actionsQueued++;
       }
     });
+    
+    if (actionsQueued > 0) {
+      console.log(`Queued ${actionsQueued} actions, will complete in ~${Math.round(delay/1000)}s`);
+    }
     
     return delay;
   }
@@ -247,11 +262,11 @@ function cleanInterests(myInterests) {
   // Set up observer to catch dynamically loaded checkboxes
   let lastProcessTime = Date.now();
   const observer = new MutationObserver(() => {
-    // Debounce - only process if 500ms have passed
+    // Debounce - only process if 2 seconds have passed (to avoid overwhelming X)
     const now = Date.now();
-    if (now - lastProcessTime > 500) {
+    if (now - lastProcessTime > 2000) {
       lastProcessTime = now;
-      setTimeout(processCheckboxes, 300);
+      setTimeout(processCheckboxes, 1000);
     }
   });
   
@@ -260,11 +275,11 @@ function cleanInterests(myInterests) {
     subtree: true
   });
   
-  // Auto-disconnect observer after 60 seconds
+  // Auto-disconnect observer after 5 minutes (longer to allow slow scrolling)
   setTimeout(() => {
     observer.disconnect();
     console.log(`Clean interests complete. Unchecked: ${uncheckedCount}, Checked: ${checkedCount}`);
-  }, 60000);
+  }, 300000);
   
   const totalCheckboxes = document.querySelectorAll('input[type="checkbox"]').length;
   

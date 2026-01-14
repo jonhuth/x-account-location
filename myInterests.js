@@ -1,6 +1,6 @@
 // Your preferred interests - edit this list to customize what gets checked
 // The Clean Interests tool will uncheck everything NOT in this list
-// and check anything that matches these keywords
+// and check anything that EXACTLY matches these keywords (case-insensitive)
 
 const MY_INTERESTS = [
   // Tech & Crypto
