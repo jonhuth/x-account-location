@@ -55,6 +55,7 @@ async function saveFollowingCache(usernames) {
 async function fetchUserFollowing() {
   return new Promise((resolve, reject) => {
     const requestId = Date.now() + Math.random();
+    let responded = false;
     
     const handler = (event) => {
       if (event.source !== window) return;
@@ -62,10 +63,13 @@ async function fetchUserFollowing() {
       if (event.data && 
           event.data.type === '__followingResponse' &&
           event.data.requestId === requestId) {
+        responded = true;
         window.removeEventListener('message', handler);
         
         if (event.data.error) {
-          reject(new Error(event.data.error));
+          console.warn('Following fetch error:', event.data.error);
+          // Return empty array on error instead of rejecting - don't block bot detection
+          resolve([]);
         } else {
           resolve(event.data.following || []);
         }
@@ -80,10 +84,14 @@ async function fetchUserFollowing() {
       requestId
     }, '*');
     
-    // Timeout after 30 seconds
+    // Timeout after 30 seconds - resolve with empty array, don't block
     setTimeout(() => {
-      window.removeEventListener('message', handler);
-      reject(new Error('Following fetch timeout'));
+      if (!responded) {
+        window.removeEventListener('message', handler);
+        console.warn('Following fetch timeout - page script may not be ready');
+        // Return empty array instead of rejecting - don't block bot detection
+        resolve([]);
+      }
     }, 30000);
   });
 }

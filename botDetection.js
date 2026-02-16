@@ -90,10 +90,14 @@ function getCoreSignals(accountData, replyElement) {
   
   // Account age: Created < 90 days + high activity (10 points)
   if (accountData.createdAt) {
-    const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-    const ageDays = ageMs / (24 * 60 * 60 * 1000);
-    if (ageDays < 30) score += 10;
-    else if (ageDays < 90) score += 5;
+    try {
+      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
+      const ageDays = ageMs / (24 * 60 * 60 * 1000);
+      if (ageDays < 30) score += 10;
+      else if (ageDays < 90) score += 5;
+    } catch (e) {
+      // Invalid date, skip
+    }
   }
   
   // Default avatar (5 points)
@@ -102,7 +106,8 @@ function getCoreSignals(accountData, replyElement) {
   }
   
   // Handle pattern: random suffix, underscores + numbers (10 points)
-  const username = accountData.username || '';
+  // Defensive: ensure string
+  const username = String(accountData.username || '');
   if (/[a-z]+\d{6,}$/i.test(username)) score += 10;
   else if (/_\d{3,}$/.test(username)) score += 7;
   else if (/\d{4,}$/.test(username)) score += 5;
@@ -123,7 +128,8 @@ function getCoreSignals(accountData, replyElement) {
 
 function getContentSignals(replyText) {
   let score = 0;
-  const text = (replyText || '').toLowerCase().trim();
+  // Defensive: ensure replyText is a string
+  const text = String(replyText || '').toLowerCase().trim();
   
   if (!text) return 0;
   
@@ -163,8 +169,9 @@ function getContentSignals(replyText) {
 
 function getCryptoSignals(accountData) {
   let score = 0;
-  const bio = (accountData.bio || '').toLowerCase();
-  const displayName = accountData.displayName || '';
+  // Defensive: ensure strings
+  const bio = String(accountData.bio || '').toLowerCase();
+  const displayName = String(accountData.displayName || '');
   
   // Bio buzzword density (12 points)
   const buzzwordCount = CRYPTO_BIO_BUZZWORDS.filter(word => 
@@ -337,7 +344,16 @@ function calculateLegitimacyReduction(accountData, userContext = {}) {
  * @param {Object} threadContext - Thread-level context
  * @returns {Object} { score, breakdown }
  */
-function calculateBotScore(accountData, replyText, userContext = {}, threadContext = {}) {
+function calculateBotScore(replyData, sensitivity = 3) {
+  // Normalize input - replyData contains all account and reply info
+  const accountData = replyData || {};
+  const replyText = String(accountData.replyText || '');
+  const userContext = {
+    userFollows: accountData.userFollows || false,
+    mutualCount: accountData.mutualCount || 0
+  };
+  const threadContext = {};
+  
   const breakdown = {};
   
   // Positive signals (increases bot likelihood)

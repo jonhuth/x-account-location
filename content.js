@@ -1218,16 +1218,23 @@ async function init() {
   await loadStats();
   await checkStorageUsage();
   
-  // Initialize bot detection
+  if (!extensionEnabled && !botDetectionEnabled) {
+    console.log('All features disabled');
+    return;
+  }
+  
+  // Inject page script FIRST - other systems depend on it
+  injectPageScript();
+  
+  // Give page script a moment to initialize and capture headers
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  // Initialize bot detection (after page script is ready)
   if (botDetectionEnabled) {
     console.log('Initializing bot detection...');
     // Inject bot detection UI styles
     if (typeof injectBotStyles === 'function') {
       injectBotStyles();
-    }
-    // Initialize legitimacy tracking
-    if (typeof initLegitimacy === 'function') {
-      initLegitimacy();
     }
     // Load bot verdict cache
     if (typeof loadBotCache === 'function') {
@@ -1237,14 +1244,11 @@ async function init() {
     if (typeof loadWhitelist === 'function') {
       await loadWhitelist();
     }
+    // Initialize legitimacy tracking (needs page script)
+    if (typeof initLegitimacy === 'function') {
+      initLegitimacy();
+    }
   }
-  
-  if (!extensionEnabled && !botDetectionEnabled) {
-    console.log('All features disabled');
-    return;
-  }
-  
-  injectPageScript();
   setupObservers();
   
   setTimeout(() => {
