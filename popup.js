@@ -3,6 +3,37 @@ const TOGGLE_KEY = 'extension_enabled';
 const DEFAULT_ENABLED = true;
 const STATS_KEY = 'location_stats';
 
+// Bot Detection Keys
+const BOT_TOGGLE_KEY = 'bot_detection_enabled';
+const BOT_SENSITIVITY_KEY = 'bot_sensitivity';
+const BOT_WHITELIST_KEY = 'bot_whitelist';
+const BOT_CACHE_KEY = 'bot_verdict_cache';
+
+const SENSITIVITY_LABELS = ['Very Lenient', 'Lenient', 'Medium', 'Aggressive', 'Very Aggressive'];
+
+// ============================================================================
+// Tab Navigation
+// ============================================================================
+
+const tabs = document.querySelectorAll('.tab');
+const tabContents = document.querySelectorAll('.tab-content');
+
+tabs.forEach(tab => {
+  tab.addEventListener('click', () => {
+    const targetId = tab.dataset.tab;
+    
+    tabs.forEach(t => t.classList.remove('active'));
+    tabContents.forEach(c => c.classList.remove('active'));
+    
+    tab.classList.add('active');
+    document.getElementById(`tab-${targetId}`).classList.add('active');
+  });
+});
+
+// ============================================================================
+// Location Tab
+// ============================================================================
+
 // Get toggle element
 const toggleSwitch = document.getElementById('toggleSwitch');
 const status = document.getElementById('status');
@@ -19,9 +50,16 @@ chrome.storage.local.get([TOGGLE_KEY, STATS_KEY], (result) => {
 
 // Listen for storage changes to update stats in real-time
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName === 'local' && changes[STATS_KEY]) {
-    // Stats have been updated, refresh the display
-    loadAndDisplayStats(changes[STATS_KEY].newValue);
+  if (areaName === 'local') {
+    if (changes[STATS_KEY]) {
+      loadAndDisplayStats(changes[STATS_KEY].newValue);
+    }
+    if (changes[BOT_CACHE_KEY]) {
+      loadBotStats();
+    }
+    if (changes[BOT_WHITELIST_KEY]) {
+      loadWhitelist();
+    }
   }
 });
 
@@ -164,6 +202,290 @@ cleanInterestsBtn.addEventListener('click', async () => {
     cleanStatus.className = 'action-status error';
   } finally {
     cleanInterestsBtn.disabled = false;
+  }
+});
+
+// ============================================================================
+// Bot Detection Tab
+// ============================================================================
+
+const botToggleSwitch = document.getElementById('botToggleSwitch');
+const sensitivitySlider = document.getElementById('sensitivitySlider');
+const sensitivityValue = document.getElementById('sensitivityValue');
+const botCount = document.getElementById('botCount');
+const humanCount = document.getElementById('humanCount');
+const botCategories = document.getElementById('botCategories');
+const lookupInput = document.getElementById('lookupInput');
+const lookupBtn = document.getElementById('lookupBtn');
+const lookupResult = document.getElementById('lookupResult');
+const whitelistList = document.getElementById('whitelistList');
+const exportDataBtn = document.getElementById('exportDataBtn');
+const clearAllDataBtn = document.getElementById('clearAllDataBtn');
+
+// Category labels
+const CATEGORY_LABELS = {
+  engagement_farmer: '🌾 Engagement Farmer',
+  sycophant: '🤖 Sycophant Bot',
+  self_promoter: '📢 Self-Promoter',
+  airdrop_farmer: '🪂 Airdrop Farmer',
+  crypto_spam: '💩 Crypto Spam',
+};
+
+// Load bot detection state
+chrome.storage.local.get([BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY, BOT_WHITELIST_KEY, BOT_CACHE_KEY], (result) => {
+  // Toggle
+  const botEnabled = result[BOT_TOGGLE_KEY] !== false; // Default enabled
+  updateBotToggle(botEnabled);
+  
+  // Sensitivity
+  const sensitivity = result[BOT_SENSITIVITY_KEY] || 3;
+  sensitivitySlider.value = sensitivity;
+  sensitivityValue.textContent = SENSITIVITY_LABELS[sensitivity - 1];
+  
+  // Stats
+  loadBotStats();
+  
+  // Whitelist
+  loadWhitelist();
+});
+
+// Bot toggle handler
+botToggleSwitch.addEventListener('click', () => {
+  chrome.storage.local.get([BOT_TOGGLE_KEY], (result) => {
+    const currentState = result[BOT_TOGGLE_KEY] !== false;
+    const newState = !currentState;
+    
+    chrome.storage.local.set({ [BOT_TOGGLE_KEY]: newState }, () => {
+      updateBotToggle(newState);
+      
+      // Notify content script
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'botDetectionToggle',
+            enabled: newState
+          }).catch(() => {});
+        }
+      });
+    });
+  });
+});
+
+function updateBotToggle(isEnabled) {
+  if (isEnabled) {
+    botToggleSwitch.classList.add('enabled');
+  } else {
+    botToggleSwitch.classList.remove('enabled');
+  }
+}
+
+// Sensitivity slider handler
+sensitivitySlider.addEventListener('input', () => {
+  const value = parseInt(sensitivitySlider.value);
+  sensitivityValue.textContent = SENSITIVITY_LABELS[value - 1];
+  
+  chrome.storage.local.set({ [BOT_SENSITIVITY_KEY]: value }, () => {
+    // Notify content script
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, {
+          type: 'botSensitivityChange',
+          sensitivity: value
+        }).catch(() => {});
+      }
+    });
+  });
+});
+
+// Load bot stats
+function loadBotStats() {
+  chrome.storage.local.get([BOT_CACHE_KEY], (result) => {
+    const cache = result[BOT_CACHE_KEY] || {};
+    let bots = 0;
+    let humans = 0;
+    const categories = {};
+    
+    for (const [, verdict] of Object.entries(cache)) {
+      if (verdict.isBot) {
+        bots++;
+        const cat = verdict.category || 'crypto_spam';
+        categories[cat] = (categories[cat] || 0) + 1;
+      } else {
+        humans++;
+      }
+    }
+    
+    botCount.textContent = bots;
+    humanCount.textContent = humans;
+    
+    // Display categories
+    if (Object.keys(categories).length > 0) {
+      botCategories.innerHTML = Object.entries(categories)
+        .sort((a, b) => b[1] - a[1])
+        .map(([cat, count]) => `
+          <div class="bot-category-item">
+            <span class="bot-category-name">${CATEGORY_LABELS[cat] || cat}</span>
+            <span class="bot-category-count">${count}</span>
+          </div>
+        `).join('');
+    } else {
+      botCategories.innerHTML = '';
+    }
+  });
+}
+
+// Lookup handler
+lookupBtn.addEventListener('click', async () => {
+  const username = lookupInput.value.trim().replace(/^@/, '');
+  if (!username) {
+    lookupResult.innerHTML = '<div style="color: #f4212e; font-size: 12px;">Please enter a username</div>';
+    return;
+  }
+  
+  lookupBtn.disabled = true;
+  lookupBtn.textContent = '...';
+  lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Checking...</div>';
+  
+  try {
+    // Check cache first
+    const cacheResult = await chrome.storage.local.get([BOT_CACHE_KEY]);
+    const cache = cacheResult[BOT_CACHE_KEY] || {};
+    const cached = cache[username.toLowerCase()];
+    
+    if (cached && cached.expiry && cached.expiry > Date.now()) {
+      displayLookupResult(username, cached);
+    } else {
+      // Send to content script to use the backend
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'botLookup',
+            username: username
+          }, (response) => {
+            if (response && response.verdict) {
+              displayLookupResult(username, response.verdict);
+            } else {
+              lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Could not check this user. Make sure you\'re on Twitter/X.</div>';
+            }
+          });
+        } else {
+          lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Open Twitter/X to use this feature.</div>';
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Lookup error:', error);
+    lookupResult.innerHTML = '<div style="color: #f4212e; font-size: 12px;">Error checking user</div>';
+  } finally {
+    lookupBtn.disabled = false;
+    lookupBtn.textContent = 'Check';
+  }
+});
+
+function displayLookupResult(username, verdict) {
+  const isBot = verdict.isBot;
+  const verdictClass = isBot ? 'bot' : 'human';
+  const verdictText = isBot ? '🤖 Bot' : '✓ Human';
+  
+  lookupResult.innerHTML = `
+    <div class="lookup-result ${verdictClass}">
+      <div class="lookup-result-header">
+        <span class="lookup-result-username">@${username}</span>
+        <span class="lookup-result-verdict ${verdictClass}">${verdictText}</span>
+      </div>
+      ${isBot ? `<div class="lookup-result-reason">${verdict.reason || CATEGORY_LABELS[verdict.category] || 'Detected as bot'}</div>` : ''}
+    </div>
+  `;
+}
+
+// Whitelist management
+function loadWhitelist() {
+  chrome.storage.local.get([BOT_WHITELIST_KEY], (result) => {
+    const whitelist = result[BOT_WHITELIST_KEY] || [];
+    
+    if (whitelist.length === 0) {
+      whitelistList.innerHTML = '<div class="whitelist-empty">No whitelisted accounts</div>';
+      return;
+    }
+    
+    whitelistList.innerHTML = whitelist.map(username => `
+      <div class="whitelist-item">
+        <span>@${username}</span>
+        <button class="whitelist-remove" data-username="${username}">×</button>
+      </div>
+    `).join('');
+    
+    // Add remove handlers
+    whitelistList.querySelectorAll('.whitelist-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const usernameToRemove = btn.dataset.username;
+        removeFromWhitelist(usernameToRemove);
+      });
+    });
+  });
+}
+
+function removeFromWhitelist(username) {
+  chrome.storage.local.get([BOT_WHITELIST_KEY], (result) => {
+    const whitelist = result[BOT_WHITELIST_KEY] || [];
+    const newWhitelist = whitelist.filter(u => u.toLowerCase() !== username.toLowerCase());
+    
+    chrome.storage.local.set({ [BOT_WHITELIST_KEY]: newWhitelist }, () => {
+      loadWhitelist();
+      
+      // Notify content script
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'botWhitelistUpdate',
+            whitelist: newWhitelist
+          }).catch(() => {});
+        }
+      });
+    });
+  });
+}
+
+// Export data
+exportDataBtn.addEventListener('click', async () => {
+  try {
+    const data = await chrome.storage.local.get(null);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `x-account-tools-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.error('Export error:', error);
+    alert('Failed to export data');
+  }
+});
+
+// Clear all data
+clearAllDataBtn.addEventListener('click', async () => {
+  if (confirm('Are you sure you want to clear ALL extension data? This cannot be undone.')) {
+    try {
+      await chrome.storage.local.clear();
+      
+      // Reload the popup to reset state
+      window.location.reload();
+      
+      // Notify content script
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'dataCleared'
+          }).catch(() => {});
+        }
+      });
+    } catch (error) {
+      console.error('Clear error:', error);
+      alert('Failed to clear data');
+    }
   }
 });
 

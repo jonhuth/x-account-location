@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <style>
     body {
-      width: 250px;
+      width: 280px;
       padding: 16px;
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -25,19 +25,39 @@
       font-weight: 600;
     }
 
+    .section {
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #eff3f4;
+    }
+
+    .section:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .section-header {
+      font-weight: 600;
+      color: #0f1419;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
     .toggle-container {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px;
+      padding: 10px 12px;
       background: #f7f9f9;
       border-radius: 8px;
-      margin-bottom: 12px;
+      margin-bottom: 8px;
     }
 
     .toggle-label {
       font-weight: 500;
       color: #0f1419;
+      font-size: 13px;
     }
 
     .toggle-switch {
@@ -48,6 +68,7 @@
       border-radius: 12px;
       cursor: pointer;
       transition: background 0.2s;
+      flex-shrink: 0;
     }
 
     .toggle-switch.enabled {
@@ -81,15 +102,11 @@
     .info {
       font-size: 12px;
       color: #536471;
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #eff3f4;
+      margin-top: 8px;
     }
 
     .stats-container {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #eff3f4;
+      margin-top: 8px;
     }
 
     .stats-header {
@@ -130,16 +147,16 @@
     }
 
     .stats-list {
-      max-height: 200px;
+      max-height: 150px;
       overflow-y: auto;
       font-size: 12px;
-      padding-right: 12px;
+      padding-right: 8px;
     }
 
     .stats-item {
       display: flex;
       justify-content: space-between;
-      padding: 4px 0;
+      padding: 3px 0;
       color: #0f1419;
     }
 
@@ -156,9 +173,7 @@
     }
 
     .tools-container {
-      margin-top: 12px;
-      padding-top: 12px;
-      border-top: 1px solid #eff3f4;
+      margin-top: 8px;
     }
 
     .tools-header {
@@ -194,6 +209,24 @@
       cursor: not-allowed;
     }
 
+    .action-btn.secondary {
+      background-color: transparent;
+      color: #1d9bf0;
+      border: 1px solid #1d9bf0;
+    }
+
+    .action-btn.secondary:hover {
+      background-color: rgba(29, 155, 240, 0.1);
+    }
+
+    .action-btn.danger {
+      background-color: #f4212e;
+    }
+
+    .action-btn.danger:hover {
+      background-color: #dc1d28;
+    }
+
     .action-status {
       margin-top: 8px;
       font-size: 12px;
@@ -216,39 +249,379 @@
       color: #536471;
       text-align: center;
     }
+
+    /* Bot Detection Styles */
+    .bot-stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .bot-stat-item {
+      background: #f7f9f9;
+      padding: 8px;
+      border-radius: 6px;
+      text-align: center;
+    }
+
+    .bot-stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f1419;
+    }
+
+    .bot-stat-value.bots {
+      color: #f4212e;
+    }
+
+    .bot-stat-value.humans {
+      color: #00ba7c;
+    }
+
+    .bot-stat-label {
+      font-size: 11px;
+      color: #536471;
+    }
+
+    .bot-categories {
+      margin-top: 8px;
+    }
+
+    .bot-category-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+
+    .bot-category-name {
+      color: #536471;
+    }
+
+    .bot-category-count {
+      color: #0f1419;
+      font-weight: 500;
+    }
+
+    /* Lookup Section */
+    .lookup-container {
+      margin-top: 8px;
+    }
+
+    .lookup-input-group {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .lookup-input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ccd6dd;
+      border-radius: 20px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .lookup-input:focus {
+      border-color: #1d9bf0;
+    }
+
+    .lookup-btn {
+      padding: 8px 16px;
+      background-color: #1d9bf0;
+      color: white;
+      border: none;
+      border-radius: 20px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .lookup-btn:hover {
+      background-color: #1a8cd8;
+    }
+
+    .lookup-btn:disabled {
+      background-color: #8ecdf8;
+      cursor: not-allowed;
+    }
+
+    .lookup-result {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .lookup-result.bot {
+      background: rgba(244, 33, 46, 0.1);
+      border: 1px solid rgba(244, 33, 46, 0.2);
+    }
+
+    .lookup-result.human {
+      background: rgba(0, 186, 124, 0.1);
+      border: 1px solid rgba(0, 186, 124, 0.2);
+    }
+
+    .lookup-result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .lookup-result-username {
+      font-weight: 600;
+      color: #0f1419;
+    }
+
+    .lookup-result-verdict {
+      font-weight: 600;
+    }
+
+    .lookup-result-verdict.bot {
+      color: #f4212e;
+    }
+
+    .lookup-result-verdict.human {
+      color: #00ba7c;
+    }
+
+    .lookup-result-reason {
+      color: #536471;
+    }
+
+    /* Whitelist Section */
+    .whitelist-container {
+      margin-top: 8px;
+    }
+
+    .whitelist-list {
+      max-height: 100px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+
+    .whitelist-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+    }
+
+    .whitelist-remove {
+      background: transparent;
+      border: none;
+      color: #f4212e;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 0 4px;
+    }
+
+    .whitelist-remove:hover {
+      opacity: 0.7;
+    }
+
+    .whitelist-empty {
+      color: #536471;
+      font-style: italic;
+      font-size: 12px;
+    }
+
+    /* Sensitivity Slider */
+    .sensitivity-container {
+      margin-top: 8px;
+    }
+
+    .sensitivity-header {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .sensitivity-label {
+      font-size: 12px;
+      color: #536471;
+    }
+
+    .sensitivity-value {
+      font-size: 12px;
+      font-weight: 600;
+      color: #0f1419;
+    }
+
+    .sensitivity-slider {
+      width: 100%;
+      height: 4px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #ccd6dd;
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .sensitivity-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      background: #1d9bf0;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+
+    .sensitivity-slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      background: #1d9bf0;
+      border-radius: 50%;
+      cursor: pointer;
+      border: none;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #eff3f4;
+      margin-bottom: 12px;
+    }
+
+    .tab {
+      flex: 1;
+      padding: 8px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+      color: #536471;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .tab:hover {
+      color: #0f1419;
+    }
+
+    .tab.active {
+      color: #1d9bf0;
+      border-bottom-color: #1d9bf0;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
   </style>
 </head>
 
 <body>
   <div class="header">
-    <h1>Twitter Location Flag</h1>
+    <h1>X Account Tools</h1>
   </div>
 
-  <div class="toggle-container">
-    <span class="toggle-label">Enable Extension</span>
-    <div class="toggle-switch" id="toggleSwitch"></div>
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="bot">🤖 Bot Detection</div>
+    <div class="tab" data-tab="location">🌍 Location</div>
+    <div class="tab" data-tab="tools">🔧 Tools</div>
   </div>
 
-  <div class="status" id="status">Loading...</div>
-
-  <div class="info">
-    Shows country flags next to Twitter usernames based on account location.
-  </div>
-
-  <div class="stats-container">
-    <div class="stats-header">
-      <span>Statistics</span>
-      <button class="reset-stats-btn" id="resetStatsBtn">Reset</button>
+  <!-- Bot Detection Tab -->
+  <div class="tab-content active" id="tab-bot">
+    <div class="section">
+      <div class="toggle-container">
+        <span class="toggle-label">Bot Detection</span>
+        <div class="toggle-switch enabled" id="botToggleSwitch"></div>
+      </div>
+      
+      <div class="sensitivity-container">
+        <div class="sensitivity-header">
+          <span class="sensitivity-label">Sensitivity</span>
+          <span class="sensitivity-value" id="sensitivityValue">Medium</span>
+        </div>
+        <input type="range" min="1" max="5" value="3" class="sensitivity-slider" id="sensitivitySlider">
+      </div>
     </div>
-    <div class="stats-total" id="statsTotal">Loading...</div>
-    <div class="stats-list" id="statsList"></div>
+
+    <div class="section">
+      <div class="section-header">Statistics</div>
+      <div class="bot-stats-grid">
+        <div class="bot-stat-item">
+          <div class="bot-stat-value bots" id="botCount">0</div>
+          <div class="bot-stat-label">Bots Detected</div>
+        </div>
+        <div class="bot-stat-item">
+          <div class="bot-stat-value humans" id="humanCount">0</div>
+          <div class="bot-stat-label">Humans</div>
+        </div>
+      </div>
+      <div class="bot-categories" id="botCategories"></div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Bot or Not Lookup</div>
+      <div class="lookup-container">
+        <div class="lookup-input-group">
+          <input type="text" class="lookup-input" id="lookupInput" placeholder="@username">
+          <button class="lookup-btn" id="lookupBtn">Check</button>
+        </div>
+        <div id="lookupResult"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Whitelist</div>
+      <div class="whitelist-container">
+        <div class="whitelist-list" id="whitelistList">
+          <div class="whitelist-empty">No whitelisted accounts</div>
+        </div>
+      </div>
+    </div>
   </div>
 
-  <div class="tools-container">
-    <div class="tools-header">Tools</div>
-    <button class="action-btn" id="cleanInterestsBtn">Clean Interests</button>
-    <div class="action-status" id="cleanStatus"></div>
-    <div class="interests-info">Removes all interests, then sets your preferred ones.</div>
+  <!-- Location Tab -->
+  <div class="tab-content" id="tab-location">
+    <div class="section">
+      <div class="toggle-container">
+        <span class="toggle-label">Show Location Flags</span>
+        <div class="toggle-switch" id="toggleSwitch"></div>
+      </div>
+      <div class="status" id="status">Loading...</div>
+      <div class="info">
+        Shows country flags next to Twitter usernames based on account location.
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="stats-header">
+        <span>Location Statistics</span>
+        <button class="reset-stats-btn" id="resetStatsBtn">Reset</button>
+      </div>
+      <div class="stats-total" id="statsTotal">Loading...</div>
+      <div class="stats-list" id="statsList"></div>
+    </div>
+  </div>
+
+  <!-- Tools Tab -->
+  <div class="tab-content" id="tab-tools">
+    <div class="section">
+      <div class="section-header">Clean Interests</div>
+      <button class="action-btn" id="cleanInterestsBtn">Clean Interests</button>
+      <div class="action-status" id="cleanStatus"></div>
+      <div class="interests-info">Removes all interests, then sets your preferred ones.</div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">Data Management</div>
+      <button class="action-btn secondary" id="exportDataBtn" style="margin-bottom: 8px;">Export All Data</button>
+      <button class="action-btn danger" id="clearAllDataBtn">Clear All Data</button>
+    </div>
   </div>
 
   <script src="countryFlags.js"></script>

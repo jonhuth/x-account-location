@@ -22,6 +22,12 @@ const TOGGLE_KEY = 'extension_enabled';
 const DEFAULT_ENABLED = true;
 const STATS_KEY = 'location_stats';
 
+// Bot Detection state
+const BOT_TOGGLE_KEY = 'bot_detection_enabled';
+const BOT_SENSITIVITY_KEY = 'bot_sensitivity';
+let botDetectionEnabled = true;
+let botSensitivity = 3; // 1-5, default medium
+
 // Processing
 const PROCESS_THROTTLE = 3000; // ms
 const INIT_DELAY = 2000; // ms
@@ -61,12 +67,17 @@ let lastLoggedStoragePercent = -1; // Track last logged percentage to avoid dupl
 // Load enabled state
 async function loadEnabledState() {
   try {
-    const result = await chrome.storage.local.get([TOGGLE_KEY]);
+    const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY]);
     extensionEnabled = result[TOGGLE_KEY] !== undefined ? result[TOGGLE_KEY] : DEFAULT_ENABLED;
+    botDetectionEnabled = result[BOT_TOGGLE_KEY] !== false; // Default enabled
+    botSensitivity = result[BOT_SENSITIVITY_KEY] || 3;
     console.log('Extension enabled:', extensionEnabled);
+    console.log('Bot detection enabled:', botDetectionEnabled, 'sensitivity:', botSensitivity);
   } catch (error) {
     console.error('Error loading enabled state:', error);
     extensionEnabled = DEFAULT_ENABLED;
+    botDetectionEnabled = true;
+    botSensitivity = 3;
   }
 }
 
@@ -89,6 +100,63 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Clear in-memory statistics
     locationStats.clear();
     console.log('Statistics reset');
+  } else if (request.type === 'botDetectionToggle') {
+    botDetectionEnabled = request.enabled;
+    console.log('Bot detection toggled:', botDetectionEnabled);
+    
+    if (botDetectionEnabled) {
+      // Re-process visible elements for bot detection
+      setTimeout(() => {
+        processUsernamesThrottled();
+      }, 500);
+    } else {
+      // Remove all bot UI
+      if (typeof removeAllBotUI === 'function') {
+        removeAllBotUI();
+      }
+    }
+  } else if (request.type === 'botSensitivityChange') {
+    botSensitivity = request.sensitivity;
+    console.log('Bot sensitivity changed:', botSensitivity);
+  } else if (request.type === 'botWhitelistUpdate') {
+    // Whitelist updated - re-process visible elements
+    console.log('Bot whitelist updated');
+    if (botDetectionEnabled) {
+      setTimeout(() => {
+        processUsernamesThrottled();
+      }, 500);
+    }
+  } else if (request.type === 'botLookup') {
+    // Bot lookup request from popup
+    const username = request.username;
+    if (typeof lookupUsername === 'function') {
+      lookupUsername(username).then(verdict => {
+        sendResponse({ verdict });
+      }).catch(err => {
+        console.error('Bot lookup error:', err);
+        sendResponse({ verdict: null });
+      });
+      return true; // Keep message channel open for async response
+    } else {
+      sendResponse({ verdict: null });
+    }
+  } else if (request.type === 'dataCleared') {
+    // All data cleared - reset state
+    console.log('All data cleared, resetting state');
+    locationCache.clear();
+    locationStats.clear();
+    botDetectionEnabled = true;
+    botSensitivity = 3;
+    extensionEnabled = true;
+    
+    // Remove all UI
+    removeAllFlags();
+    if (typeof removeAllBotUI === 'function') {
+      removeAllBotUI();
+    }
+    
+    // Re-initialize
+    setTimeout(init, 500);
   }
 });
 
@@ -1102,7 +1170,18 @@ function setupObservers() {
   observer = new MutationObserver((mutations) => {
     // Check if any mutations added nodes (extension enabled check is in processUsernames)
     if (mutations.some(m => m.addedNodes.length > 0)) {
-      processUsernamesThrottled();
+      if (extensionEnabled) {
+        processUsernamesThrottled();
+      }
+      if (botDetectionEnabled) {
+        // Debounce bot detection processing
+        if (!processBotDetectionForReplies.timeout) {
+          processBotDetectionForReplies.timeout = setTimeout(() => {
+            processBotDetectionForReplies();
+            processBotDetectionForReplies.timeout = null;
+          }, PROCESS_THROTTLE);
+        }
+      }
     }
   });
   
@@ -1117,8 +1196,15 @@ function setupObservers() {
     const url = location.href;
     if (url !== lastUrl) {
       lastUrl = url;
-      console.log('Page navigation detected, reprocessing usernames');
-      setTimeout(processUsernamesThrottled, INIT_DELAY);
+      console.log('Page navigation detected, reprocessing');
+      setTimeout(() => {
+        if (extensionEnabled) {
+          processUsernamesThrottled();
+        }
+        if (botDetectionEnabled) {
+          processBotDetectionForReplies();
+        }
+      }, INIT_DELAY);
     }
   }).observe(document, { subtree: true, childList: true });
 }
@@ -1132,8 +1218,29 @@ async function init() {
   await loadStats();
   await checkStorageUsage();
   
-  if (!extensionEnabled) {
-    console.log('Extension is disabled');
+  // Initialize bot detection
+  if (botDetectionEnabled) {
+    console.log('Initializing bot detection...');
+    // Inject bot detection UI styles
+    if (typeof injectBotStyles === 'function') {
+      injectBotStyles();
+    }
+    // Initialize legitimacy tracking
+    if (typeof initLegitimacy === 'function') {
+      initLegitimacy();
+    }
+    // Load bot verdict cache
+    if (typeof loadBotCache === 'function') {
+      await loadBotCache();
+    }
+    // Load whitelist
+    if (typeof loadWhitelist === 'function') {
+      await loadWhitelist();
+    }
+  }
+  
+  if (!extensionEnabled && !botDetectionEnabled) {
+    console.log('All features disabled');
     return;
   }
   
@@ -1142,9 +1249,207 @@ async function init() {
   
   setTimeout(() => {
     processUsernamesThrottled();
+    // Also process bot detection
+    if (botDetectionEnabled) {
+      processBotDetectionForReplies();
+    }
   }, INIT_DELAY);
   
   setInterval(saveCache, CACHE_PERIODIC_SAVE);
+}
+
+// ============================================================================
+// Bot Detection Integration
+// ============================================================================
+
+// Process a reply element for bot detection
+async function processBotDetection(replyElement) {
+  if (!botDetectionEnabled) return;
+  if (replyElement.dataset.botProcessed === 'true') return;
+  
+  // Mark as processing
+  replyElement.dataset.botProcessed = 'processing';
+  
+  const username = extractUsername(replyElement);
+  if (!username) {
+    replyElement.dataset.botProcessed = 'failed';
+    return;
+  }
+  
+  // Check whitelist first
+  if (typeof isWhitelisted === 'function' && isWhitelisted(username)) {
+    replyElement.dataset.botProcessed = 'whitelisted';
+    return;
+  }
+  
+  // Check cache first (instant)
+  if (typeof getCachedVerdict === 'function') {
+    const cached = getCachedVerdict(username);
+    if (cached) {
+      if (typeof applyBotUI === 'function') {
+        applyBotUI(replyElement, cached);
+      }
+      replyElement.dataset.botProcessed = 'true';
+      return;
+    }
+  }
+  
+  // Extract reply data for heuristics
+  const replyData = extractReplyData(replyElement, username);
+  if (!replyData) {
+    replyElement.dataset.botProcessed = 'failed';
+    return;
+  }
+  
+  // Add location from cache if available
+  if (locationCache.has(username)) {
+    const cached = locationCache.get(username);
+    if (cached.expiry && cached.expiry > Date.now()) {
+      replyData.location = cached.location;
+    }
+  }
+  
+  // Calculate heuristic score
+  let heuristicScore = 0;
+  let action = 'none';
+  
+  if (typeof calculateBotScore === 'function') {
+    // Add legitimacy context
+    if (typeof getUserContext === 'function') {
+      const userContext = await getUserContext(username);
+      replyData.userFollows = userContext.userFollows;
+      replyData.mutualCount = userContext.mutualCount;
+    }
+    
+    const result = calculateBotScore(replyData, botSensitivity);
+    heuristicScore = result.score;
+    replyData.heuristicScore = heuristicScore;
+    
+    if (typeof getActionForScore === 'function') {
+      action = getActionForScore(heuristicScore, botSensitivity);
+    }
+  }
+  
+  // Action based on heuristic score
+  if (action === 'dim') {
+    // High confidence bot - dim immediately
+    const verdict = {
+      username,
+      isBot: true,
+      confidence: Math.min(0.95, heuristicScore / 100),
+      category: 'crypto_spam',
+      reason: 'High-confidence heuristic detection',
+      source: 'heuristics',
+      expiry: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
+    };
+    
+    if (typeof persistBotCache === 'function') {
+      persistBotCache(username, verdict);
+    }
+    
+    if (typeof applyBotUI === 'function') {
+      applyBotUI(replyElement, verdict);
+    }
+    replyElement.dataset.botProcessed = 'true';
+  } else if (action === 'ai') {
+    // Uncertain - queue for AI classification
+    if (typeof queueForClassification === 'function') {
+      queueForClassification(replyData, (verdict) => {
+        if (verdict && typeof applyBotUI === 'function') {
+          applyBotUI(replyElement, verdict);
+        }
+        replyElement.dataset.botProcessed = 'true';
+      });
+    }
+    replyElement.dataset.botProcessed = 'pending';
+  } else {
+    // Low score - likely human
+    replyElement.dataset.botProcessed = 'human';
+  }
+}
+
+// Extract data from a reply element
+function extractReplyData(replyElement, username) {
+  try {
+    const displayNameEl = replyElement.querySelector('[data-testid="User-Name"] a, [data-testid="UserName"] a');
+    const displayName = displayNameEl?.textContent?.trim() || username;
+    
+    const replyTextEl = replyElement.querySelector('[data-testid="tweetText"]');
+    const replyText = replyTextEl?.textContent?.trim() || '';
+    
+    // Get time element for timing analysis
+    const timeEl = replyElement.querySelector('time');
+    const replyTime = timeEl?.getAttribute('datetime');
+    
+    // Check for default avatar
+    const avatarEl = replyElement.querySelector('img[src*="profile_images"]');
+    const hasCustomAvatar = avatarEl && !avatarEl.src.includes('default_profile');
+    
+    // Check for verified badge
+    const verifiedEl = replyElement.querySelector('[data-testid="icon-verified"], svg[aria-label*="Verified"]');
+    const isVerified = !!verifiedEl;
+    
+    return {
+      username,
+      displayName,
+      replyText,
+      originalTweetText: '', // Would need to traverse up to find this
+      bio: '', // Not available in reply context
+      followers: 0, // Would need API call
+      following: 0,
+      accountCreatedAt: '',
+      hasCustomAvatar,
+      isVerified,
+      location: null,
+      secondsAfterOriginal: 0,
+      heuristicScore: 0,
+      userFollows: false,
+      mutualCount: 0
+    };
+  } catch (error) {
+    console.error('Error extracting reply data:', error);
+    return null;
+  }
+}
+
+// Process bot detection for visible replies
+async function processBotDetectionForReplies() {
+  if (!botDetectionEnabled) return;
+  
+  // Find reply elements (articles that are replies, not the main tweet)
+  const replies = document.querySelectorAll('article[data-testid="tweet"]');
+  
+  for (const reply of replies) {
+    // Skip if already processed
+    if (reply.dataset.botProcessed && reply.dataset.botProcessed !== 'failed') {
+      continue;
+    }
+    
+    // Check visibility
+    const rect = reply.getBoundingClientRect();
+    const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
+    
+    if (isVisible) {
+      await processBotDetection(reply);
+    }
+  }
+}
+
+// Inject bot detection scripts
+function injectBotDetectionScripts() {
+  const scripts = ['botDetection.js', 'botLegitimacy.js', 'botCache.js', 'botUI.js'];
+  
+  scripts.forEach(scriptName => {
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL(scriptName);
+    script.onload = function() {
+      console.log(`Loaded ${scriptName}`);
+    };
+    script.onerror = function() {
+      console.error(`Failed to load ${scriptName}`);
+    };
+    (document.head || document.documentElement).appendChild(script);
+  });
 }
 
 // Wait for page to load

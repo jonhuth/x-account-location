@@ -83,8 +83,223 @@
     }
   }, 3000);
   
+  // Helper: Get current user's screen name from page
+  function getCurrentUsername() {
+    // Try to get from page URL patterns or DOM
+    const navLinks = document.querySelectorAll('nav a[href^="/"]');
+    for (const link of navLinks) {
+      const href = link.getAttribute('href');
+      // Profile link is typically just /username
+      if (href && href.match(/^\/[a-zA-Z0-9_]+$/) && !['home', 'explore', 'notifications', 'messages', 'i', 'compose', 'search', 'settings'].includes(href.slice(1))) {
+        // Check if this is the profile link (usually has avatar or specific data-testid)
+        if (link.querySelector('img') || link.closest('[data-testid="AppTabBar_Profile_Link"]')) {
+          return href.slice(1);
+        }
+      }
+    }
+    // Fallback: try to find in account switcher or similar
+    const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+    if (accountSwitcher) {
+      const usernameSpan = accountSwitcher.querySelector('span');
+      if (usernameSpan) {
+        const match = usernameSpan.textContent?.match(/@([a-zA-Z0-9_]+)/);
+        if (match) return match[1];
+      }
+    }
+    return null;
+  }
+  
+  // Fetch user's following list with pagination
+  async function fetchFollowingList() {
+    const currentUser = getCurrentUsername();
+    if (!currentUser) {
+      throw new Error('Could not determine current user');
+    }
+    
+    console.log(`Fetching following list for @${currentUser}...`);
+    
+    const following = [];
+    let cursor = null;
+    let pageCount = 0;
+    const maxPages = 50; // Safety limit: 50 pages * 200 = 10,000 max following
+    
+    // Use captured headers
+    const headers = twitterHeaders || {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json'
+    };
+    
+    while (pageCount < maxPages) {
+      const variables = {
+        userId: null, // Will be set from first call
+        count: 200,
+        includePromotedContent: false
+      };
+      
+      if (cursor) {
+        variables.cursor = cursor;
+      }
+      
+      // First, we need to get the user ID
+      if (!variables.userId) {
+        // Get user ID from UserByScreenName query
+        const userIdUrl = `https://x.com/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify({ screen_name: currentUser }))}`;
+        try {
+          const userIdResponse = await fetch(userIdUrl, {
+            method: 'GET',
+            credentials: 'include',
+            headers: headers,
+            referrer: window.location.href
+          });
+          
+          if (userIdResponse.ok) {
+            const userData = await userIdResponse.json();
+            variables.userId = userData?.data?.user?.result?.rest_id;
+            if (!variables.userId) {
+              throw new Error('Could not get user ID');
+            }
+          } else if (userIdResponse.status === 429) {
+            console.warn('Rate limited when fetching user ID');
+            break;
+          } else {
+            throw new Error(`Failed to get user ID: ${userIdResponse.status}`);
+          }
+        } catch (error) {
+          console.error('Error getting user ID:', error);
+          throw error;
+        }
+      }
+      
+      // Now fetch following
+      const features = {
+        rweb_tipjar_consumption_enabled: true,
+        responsive_web_graphql_exclude_directive_enabled: true,
+        verified_phone_label_enabled: false,
+        creator_subscriptions_tweet_preview_api_enabled: true,
+        responsive_web_graphql_timeline_navigation_enabled: true,
+        responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+        communities_web_enable_tweet_community_results_fetch: true,
+        c9s_tweet_anatomy_moderator_badge_enabled: true,
+        articles_preview_enabled: true,
+        responsive_web_edit_tweet_api_enabled: true,
+        graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
+        view_counts_everywhere_api_enabled: true,
+        longform_notetweets_consumption_enabled: true,
+        responsive_web_twitter_article_tweet_consumption_enabled: true,
+        tweet_awards_web_tipping_enabled: false,
+        creator_subscriptions_quote_tweet_preview_enabled: false,
+        freedom_of_speech_not_reach_fetch_enabled: true,
+        standardized_nudges_misinfo: true,
+        tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
+        rweb_video_timestamps_enabled: true,
+        longform_notetweets_rich_text_read_enabled: true,
+        longform_notetweets_inline_media_enabled: true,
+        responsive_web_enhance_cards_enabled: false
+      };
+      
+      const followingUrl = `https://x.com/i/api/graphql/iSicc7LrzWGBgDPL0tM_TQ/Following?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(features))}`;
+      
+      try {
+        const response = await fetch(followingUrl, {
+          method: 'GET',
+          credentials: 'include',
+          headers: headers,
+          referrer: window.location.href
+        });
+        
+        if (response.status === 429) {
+          console.warn('Rate limited when fetching following list');
+          break;
+        }
+        
+        if (!response.ok) {
+          console.error(`Following API error: ${response.status}`);
+          break;
+        }
+        
+        const data = await response.json();
+        const timeline = data?.data?.user?.result?.timeline?.timeline;
+        
+        if (!timeline?.instructions) {
+          console.log('No more following entries');
+          break;
+        }
+        
+        // Extract usernames from instructions
+        let foundEntries = false;
+        for (const instruction of timeline.instructions) {
+          const entries = instruction.entries || [];
+          for (const entry of entries) {
+            if (entry.content?.itemContent?.user_results?.result) {
+              const user = entry.content.itemContent.user_results.result;
+              const screenName = user.legacy?.screen_name;
+              if (screenName) {
+                following.push(screenName.toLowerCase());
+                foundEntries = true;
+              }
+            }
+            // Check for cursor
+            if (entry.content?.cursorType === 'Bottom') {
+              cursor = entry.content.value;
+            }
+          }
+        }
+        
+        if (!foundEntries) {
+          console.log('No more following entries found');
+          break;
+        }
+        
+        pageCount++;
+        console.log(`Fetched page ${pageCount}, total following: ${following.length}`);
+        
+        // Small delay between pages to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+      } catch (error) {
+        console.error('Error fetching following page:', error);
+        break;
+      }
+    }
+    
+    console.log(`Finished fetching following list: ${following.length} accounts`);
+    return following;
+  }
+  
   // Listen for fetch requests from content script via postMessage
   window.addEventListener('message', async function(event) {
+    // Handle following list request
+    if (event.data && event.data.type === '__fetchFollowing') {
+      const { requestId } = event.data;
+      
+      // Wait for headers to be ready
+      if (!headersReady) {
+        let waitCount = 0;
+        while (!headersReady && waitCount < 30) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          waitCount++;
+        }
+      }
+      
+      try {
+        const following = await fetchFollowingList();
+        window.postMessage({
+          type: '__followingResponse',
+          following,
+          requestId
+        }, '*');
+      } catch (error) {
+        console.error('Error fetching following list:', error);
+        window.postMessage({
+          type: '__followingResponse',
+          following: [],
+          error: error.message,
+          requestId
+        }, '*');
+      }
+      return;
+    }
+    
     // Only accept messages from our extension
     if (event.data && event.data.type === '__fetchLocation') {
       const { screenName, requestId } = event.data;

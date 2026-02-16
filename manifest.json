@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Twitter Account Location Flag",
-  "version": "1.0.0",
-  "description": "Shows country flag emoji next to Twitter usernames based on account location",
+  "name": "X Account Tools",
+  "version": "2.0.0",
+  "description": "Bot detection, location flags, and tools for X/Twitter",
   "permissions": [
     "activeTab",
     "storage",
@@ -11,11 +11,12 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Twitter Location Flag"
+    "default_title": "X Account Tools"
   },
   "host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*"
+    "https://twitter.com/*",
+    "https://x-bot-detector-production.up.railway.app/*"
   ],
   "content_scripts": [
     {
@@ -23,7 +24,14 @@
         "https://x.com/*",
         "https://twitter.com/*"
       ],
-      "js": ["countryFlags.js", "content.js"],
+      "js": [
+        "countryFlags.js",
+        "botDetection.js",
+        "botLegitimacy.js",
+        "botCache.js",
+        "botUI.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
