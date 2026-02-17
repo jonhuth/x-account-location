@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Validate manifest.json
+        run: |
+          echo "Validating manifest.json..."
+          cat manifest.json | jq empty
+          echo "✓ manifest.json is valid JSON"
+      
+      - name: Check JS syntax
+        run: |
+          echo "Checking JavaScript syntax..."
+          for f in *.js; do
+            node --check "$f" && echo "✓ $f"
+          done
