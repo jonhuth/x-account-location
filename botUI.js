@@ -6,38 +6,34 @@
 // ============================================================================
 
 const BOT_UI_STYLES = `
-/* Bot badge - compact inline pill like botblock.ai */
+/* Bot badge - inline like country flags */
 .bot-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  display: inline;
+  font-size: 12px;
   font-weight: 600;
-  padding: 1px 6px;
+  padding: 0 5px;
   border-radius: 4px;
   margin-left: 4px;
-  vertical-align: baseline;
+  margin-right: 2px;
+  vertical-align: middle;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  line-height: 1.4;
-  position: relative;
-  top: -1px;
 }
 
-/* High confidence bot - Red */
+/* High confidence bot - Red like botblock */
 .bot-badge-high {
-  background: #dc2626;
+  background: #ef4444;
   color: #fff;
 }
 
-/* Medium confidence - Orange/Yellow */
+/* Medium confidence - Orange/Amber */
 .bot-badge-medium {
   background: #f59e0b;
   color: #000;
 }
 
-/* Low/Suspicious - Muted */
+/* Low/Suspicious - Gray */
 .bot-badge-low {
   background: #6b7280;
   color: #fff;
@@ -49,29 +45,25 @@ const BOT_UI_STYLES = `
   color: #9ca3af;
 }
 
-/* Score number in badge */
+/* Score display */
 .bot-badge-score {
-  font-weight: 700;
-  font-size: 10px;
+  font-weight: 400;
   opacity: 0.9;
+  margin-left: 2px;
 }
 
-/* "Hide again" button */
+/* "Hide again" button - inline style */
 .bot-hide-btn {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  padding: 1px 6px;
+  display: inline;
+  font-size: 12px;
+  padding: 0 5px;
   border-radius: 4px;
   margin-left: 4px;
   background: #374151;
   color: #9ca3af;
   border: none;
   cursor: pointer;
-  vertical-align: baseline;
-  line-height: 1.4;
-  position: relative;
-  top: -1px;
+  vertical-align: middle;
 }
 
 .bot-hide-btn:hover {
@@ -79,45 +71,38 @@ const BOT_UI_STYLES = `
   color: #fff;
 }
 
-/* Dimmed reply - more subtle than before */
+/* Dimmed reply */
 .bot-reply-dimmed {
-  opacity: 0.35;
+  opacity: 0.3 !important;
   transition: opacity 0.2s ease;
 }
 
 .bot-reply-dimmed:hover {
-  opacity: 0.5;
+  opacity: 0.5 !important;
 }
 
 /* Red left border for bot tweets */
 .bot-reply-flagged {
-  border-left: 3px solid #dc2626 !important;
-  padding-left: 12px !important;
+  border-left: 3px solid #ef4444 !important;
 }
 
 .bot-reply-flagged-medium {
   border-left: 3px solid #f59e0b !important;
-  padding-left: 12px !important;
 }
 
-/* Container needs relative positioning for actions */
-.bot-reply-container {
-  position: relative;
-}
-
-/* Quick actions - appear on hover */
+/* Quick actions container - shows on hover */
 .bot-actions {
   position: absolute;
   top: 8px;
-  right: 8px;
+  right: 48px;
   display: flex;
   gap: 4px;
   opacity: 0;
   transition: opacity 0.15s ease;
-  z-index: 5;
+  z-index: 10;
 }
 
-.bot-reply-container:hover .bot-actions {
+article[data-testid="tweet"]:hover .bot-actions {
   opacity: 1;
 }
 
@@ -128,28 +113,27 @@ const BOT_UI_STYLES = `
   border-radius: 4px;
   border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
 }
 
 .bot-action-whitelist {
-  background: rgba(29, 155, 240, 0.15);
   color: #1d9bf0;
 }
 
 .bot-action-whitelist:hover {
-  background: rgba(29, 155, 240, 0.25);
+  background: rgba(29, 155, 240, 0.3);
 }
 
 .bot-action-block {
-  background: rgba(244, 33, 46, 0.15);
   color: #f4212e;
 }
 
 .bot-action-block:hover {
-  background: rgba(244, 33, 46, 0.25);
+  background: rgba(244, 33, 46, 0.3);
 }
 
-/* Animation for pending state */
+/* Pending pulse animation */
 @keyframes bot-pulse {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 1; }
@@ -157,25 +141,6 @@ const BOT_UI_STYLES = `
 
 .bot-badge-pending {
   animation: bot-pulse 1.5s ease-in-out infinite;
-}
-
-/* Tooltip on hover */
-.bot-badge[title]:hover::after {
-  content: attr(title);
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-top: 4px;
-  padding: 4px 8px;
-  background: #1f2937;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 400;
-  border-radius: 4px;
-  white-space: nowrap;
-  z-index: 100;
-  pointer-events: none;
 }
 `;
 
@@ -190,6 +155,7 @@ function injectBotStyles() {
   style.id = 'bot-ui-styles';
   style.textContent = BOT_UI_STYLES;
   document.head.appendChild(style);
+  console.log('BotUI: Styles injected'); // Debug: confirm styles load
 }
 
 // ============================================================================
@@ -229,34 +195,64 @@ function getBadgeLabel(verdict) {
   return 'Low';
 }
 
+// Badge colors matching botblock.ai
+const BADGE_COLORS = {
+  high: { bg: '#ef4444', fg: '#ffffff' },    // Red
+  medium: { bg: '#f59e0b', fg: '#000000' },  // Amber
+  low: { bg: '#6b7280', fg: '#ffffff' },     // Gray
+  pending: { bg: '#374151', fg: '#9ca3af' }  // Dark gray
+};
+
 function createBotBadge(verdict) {
   const badge = document.createElement('span');
-  badge.className = 'bot-badge';
   badge.setAttribute('data-bot-badge', 'true');
   
+  let severity = 'pending';
+  let text = '...';
+  let title = 'Analyzing...';
+  
   if (verdict.isBot === 'pending') {
-    badge.classList.add('bot-badge-pending');
-    badge.textContent = '...';
-    badge.title = 'Analyzing...';
+    severity = 'pending';
+    text = '...';
+    title = 'Analyzing...';
   } else if (verdict.isBot) {
     const confidence = verdict.confidence || 0;
-    const severity = getSeverityLevel(confidence);
+    severity = getSeverityLevel(confidence);
     const label = getBadgeLabel(verdict);
-    const score = Math.round(confidence * 100) / 10; // e.g., 8.2
+    const score = Math.round(confidence * 100) / 10;
     
-    badge.classList.add(`bot-badge-${severity}`);
-    
-    // Format: "Bot · 8.2" or "Suspicious · 6.4"
     if (severity === 'high') {
-      badge.innerHTML = `Bot<span class="bot-badge-score"> · Hidden</span>`;
+      text = 'Bot · Hidden';
     } else {
-      badge.innerHTML = `${label}<span class="bot-badge-score"> · ${score.toFixed(1)}</span>`;
+      text = `${label} · ${score.toFixed(1)}`;
     }
     
-    // Build detailed tooltip
     const category = CATEGORY_LABELS[verdict.category] || 'Bot';
-    badge.title = `${category}: ${verdict.reason || 'Automated behavior detected'}`;
+    title = `${category}: ${verdict.reason || 'Automated behavior detected'}`;
   }
+  
+  const colors = BADGE_COLORS[severity];
+  
+  // Apply inline styles directly (ensures they work even if stylesheet fails)
+  Object.assign(badge.style, {
+    display: 'inline',
+    fontSize: '12px',
+    fontWeight: '600',
+    padding: '0 5px',
+    borderRadius: '4px',
+    marginLeft: '4px',
+    marginRight: '2px',
+    verticalAlign: 'middle',
+    cursor: 'pointer',
+    userSelect: 'none',
+    whiteSpace: 'nowrap',
+    backgroundColor: colors.bg,
+    color: colors.fg
+  });
+  
+  badge.textContent = text;
+  badge.title = title;
+  badge.className = `bot-badge bot-badge-${severity}`;
   
   return badge;
 }
@@ -292,44 +288,91 @@ function getReplyContainer(element) {
 }
 
 /**
- * Find the best place to insert the bot badge
- * We want it to appear right after the timestamp or handle
+ * Find the @handle section within the username container
+ * MUST match the exact approach in content.js for country flags
  */
-function findBadgeInsertionPoint(replyElement) {
-  // Strategy 1: Find the row with username/handle - look for the timestamp
-  const timeElement = replyElement.querySelector('time');
-  if (timeElement) {
-    // Go up to find the link container, then insert after it
-    const timeLink = timeElement.closest('a');
-    if (timeLink && timeLink.parentElement) {
-      return { parent: timeLink.parentElement, insertAfter: timeLink };
+function findHandleSection(container, screenName) {
+  if (!screenName) return null;
+  
+  // Match EXACTLY how content.js does it (case-sensitive, no 'i' flag)
+  return Array.from(container.querySelectorAll('div')).find(div => {
+    const link = div.querySelector(`a[href="/${screenName}"]`);
+    return link && link.textContent?.trim() === `@${screenName}`;
+  });
+}
+
+/**
+ * Insert bot badge into the username container
+ * 
+ * PRIORITY ORDER:
+ * 1. After country flag (if exists) - keeps them together
+ * 2. Before @handle section (same as flag placement)
+ * 3. After display name
+ * 4. Fallback: append
+ */
+function insertBotBadge(container, badge, screenName) {
+  // BEST: Insert after country flag (keeps flag + badge together inline)
+  const existingFlag = container.querySelector('[data-twitter-flag]');
+  if (existingFlag) {
+    try {
+      // Insert badge right after the flag
+      existingFlag.after(badge);
+      return true;
+    } catch (e) { /* continue */ }
+  }
+  
+  // Find handle section (@username)
+  const handleSection = findHandleSection(container, screenName);
+  
+  // Strategy 2: Insert before handle section if direct child
+  if (handleSection && handleSection.parentNode === container) {
+    try {
+      container.insertBefore(badge, handleSection);
+      return true;
+    } catch (e) { /* continue */ }
+  }
+  
+  // Strategy 3: Insert before handle section's parent
+  if (handleSection?.parentNode && handleSection.parentNode !== container) {
+    try {
+      handleSection.parentNode.insertBefore(badge, handleSection);
+      return true;
+    } catch (e) { /* continue */ }
+  }
+  
+  // Strategy 4: Insert after display name link
+  const displayNameLink = container.querySelector('a[href^="/"]');
+  if (displayNameLink) {
+    const displayContainer = displayNameLink.closest('div');
+    if (displayContainer?.parentNode) {
+      try {
+        displayContainer.parentNode.insertBefore(badge, displayContainer.nextSibling);
+        return true;
+      } catch (e) { /* continue */ }
     }
   }
   
-  // Strategy 2: Find the username row and append to it
-  const userNameRow = replyElement.querySelector('[data-testid="User-Name"]');
-  if (userNameRow) {
-    // Find the last child that's part of the username row
-    const spans = userNameRow.querySelectorAll(':scope > div > div > span, :scope > div > span');
-    if (spans.length > 0) {
-      const lastSpan = spans[spans.length - 1];
-      return { parent: lastSpan.parentElement, insertAfter: lastSpan };
-    }
-    return { parent: userNameRow, insertAfter: null };
+  // Strategy 5: Fallback - append to container
+  try {
+    container.appendChild(badge);
+    return true;
+  } catch (e) {
+    return false;
   }
-  
-  return null;
 }
 
 /**
  * Apply bot UI to a reply element
  * @param {HTMLElement} replyElement - The reply element
- * @param {Object} verdict - Bot verdict
- * @param {string} username - The username
+ * @param {Object} verdict - Bot verdict (should contain username)
+ * @param {string} [username] - Optional override for username
  */
 function applyBotUI(replyElement, verdict, username) {
   const container = getReplyContainer(replyElement);
   if (!container) return;
+  
+  // Get username from verdict or parameter
+  const resolvedUsername = username || verdict?.username || '';
   
   // Skip if already processed with same verdict
   const existingVerdict = container.dataset.botVerdict;
@@ -340,7 +383,7 @@ function applyBotUI(replyElement, verdict, username) {
   
   // Store verdict
   container.dataset.botVerdict = JSON.stringify(verdict);
-  container.dataset.botUsername = username || '';
+  container.dataset.botUsername = resolvedUsername;
   
   // Skip if not a bot
   if (!verdict.isBot && verdict.isBot !== 'pending') return;
@@ -348,19 +391,19 @@ function applyBotUI(replyElement, verdict, username) {
   const confidence = verdict.confidence || 0;
   const severity = getSeverityLevel(confidence);
   
-  // Add badge - find the right insertion point
-  const insertPoint = findBadgeInsertionPoint(container);
-  if (insertPoint) {
+  // Find the User-Name container (MUST match content.js flag logic exactly)
+  // content.js uses: '[data-testid="UserName"], [data-testid="User-Name"]'
+  const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+  if (userNameContainer) {
     const badge = createBotBadge(verdict);
-    
-    if (insertPoint.insertAfter) {
-      insertPoint.insertAfter.parentNode.insertBefore(
-        badge, 
-        insertPoint.insertAfter.nextSibling
-      );
+    const inserted = insertBotBadge(userNameContainer, badge, resolvedUsername);
+    if (inserted) {
+      console.log('BotUI: Badge inserted for', resolvedUsername, '- parent:', badge.parentElement?.tagName);
     } else {
-      insertPoint.parent.appendChild(badge);
+      console.warn('BotUI: Failed to insert badge for', resolvedUsername);
     }
+  } else {
+    console.warn('BotUI: No User-Name container found for', resolvedUsername);
   }
   
   // Add colored left border to make bots visually distinct
@@ -376,7 +419,7 @@ function applyBotUI(replyElement, verdict, username) {
   if (verdict.isBot === true && confidence >= 0.75) {
     container.classList.add('bot-reply-dimmed');
     container.classList.add('bot-reply-container');
-    addQuickActions(container, username || '');
+    addQuickActions(container, resolvedUsername);
     
     // Click anywhere on dimmed reply to reveal
     container.addEventListener('click', function revealHandler(e) {
@@ -389,7 +432,7 @@ function applyBotUI(replyElement, verdict, username) {
       // Add "Hide again" button next to badge
       const badge = container.querySelector('[data-bot-badge]');
       if (badge && badge.parentElement) {
-        const hideBtn = createHideAgainButton(container, verdict, username);
+        const hideBtn = createHideAgainButton(container, verdict, resolvedUsername);
         badge.parentElement.insertBefore(hideBtn, badge.nextSibling);
       }
     });
@@ -554,6 +597,7 @@ function testOnTweet(severity = 'high') {
 if (typeof window !== 'undefined') {
   window.BotUI = {
     initBotUI,
+    injectBotStyles,  // CRITICAL: Must be exported for content.js to call it
     applyBotUI,
     removeBotUI,
     updateBotVerdict,

@@ -1019,6 +1019,17 @@ function setupObservers() {
   
   observer.observe(document.body, { childList: true, subtree: true });
   
+  // Scroll listener for processing tweets that become visible
+  let scrollTimeout = null;
+  window.addEventListener('scroll', () => {
+    if (!scrollTimeout) {
+      scrollTimeout = setTimeout(() => {
+        scrollTimeout = null;
+        if (botDetectionEnabled) scheduleBotProcessing();
+      }, 300); // 300ms debounce on scroll
+    }
+  }, { passive: true });
+  
   // Navigation observer for SPA (separate, less frequent)
   let lastUrl = location.href;
   setInterval(() => {
@@ -1107,7 +1118,11 @@ async function processBotDetection(el) {
   el.dataset.botProcessed = 'processing';
   
   const username = extractUsername(el);
-  if (!username) { el.dataset.botProcessed = 'skip'; return; }
+  if (!username) {
+    console.log('🤖 Skipping tweet - no username found');
+    el.dataset.botProcessed = 'skip';
+    return;
+  }
   
   // Whitelist check
   if (BotModules.Cache?.isWhitelisted?.(username)) {
@@ -1123,8 +1138,8 @@ async function processBotDetection(el) {
     return;
   }
   
-  // Extract data from DOM + intercepted Twitter API
-  const replyData = await extractReplyData(el, username);
+  // Extract data from DOM (synchronous)
+  const replyData = extractReplyData(el, username);
   if (!replyData) { el.dataset.botProcessed = 'skip'; return; }
   
   // Add legitimacy context (async but fast - uses local cache)
@@ -1142,7 +1157,12 @@ async function processBotDetection(el) {
   
   const result = BotModules.Detection.calculateBotScore(replyData);
   const score = result.score;
-  const action = BotModules.Detection.getActionForScore?.(score) || 'none';
+  const action = BotModules.Detection.getActionForScore?.(score, replyData.hasTwitterData) || 'none';
+  
+  // Debug: Log detection results (only if interesting)
+  if (score > 10 || action !== 'none') {
+    console.log(`🤖 @${username}: score=${score}, action=${action}, tweet="${replyData.replyText?.slice(0, 50)}..."`, result.breakdown);
+  }
   
   if (action === 'dim') {
     // High confidence bot
@@ -1154,13 +1174,22 @@ async function processBotDetection(el) {
       source: 'heuristics',
       expiry: Date.now() + 7 * 24 * 60 * 60 * 1000
     };
+    console.log(`🚫 BOT: @${username} flagged with score=${score}`);
     BotModules.Cache?.persistBotCache?.(username, verdict);
     BotModules.UI?.applyBotUI?.(el, verdict);
     botStats.bots++;
     el.dataset.botProcessed = 'bot';
   } else if (action === 'ai') {
-    // Queue for AI
-    BotModules.Cache?.queueForClassification?.(replyData, (verdict) => {
+    // Queue for AI - enrich with heuristic score for server context
+    const enrichedData = {
+      ...replyData,
+      heuristicScore: score,
+      originalTweetText: '', // Not easily available, server handles missing data
+      secondsAfterOriginal: 0, // Not easily available
+      accountCreatedAt: '', // Not available from DOM
+    };
+    
+    BotModules.Cache?.queueForClassification?.(enrichedData, (verdict) => {
       if (verdict?.isBot) {
         BotModules.UI?.applyBotUI?.(el, verdict);
         botStats.bots++;
@@ -1178,37 +1207,58 @@ async function processBotDetection(el) {
   botStats.processed++;
 }
 
-// Extract data from tweet element + Twitter API cache
-async function extractReplyData(el, username) {
+// Extract data from tweet element (DOM only - no external API)
+function extractReplyData(el, username) {
   try {
-    const displayNameEl = el.querySelector('[data-testid="User-Name"] a');
-    const displayName = displayNameEl?.textContent?.trim() || username;
+    // Display name - first link in User-Name container
+    const userNameContainer = el.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+    let displayName = username;
+    if (userNameContainer) {
+      const nameLink = userNameContainer.querySelector('a[href^="/"]');
+      if (nameLink) {
+        // Display name is the text content excluding the @handle
+        const fullText = nameLink.textContent?.trim() || '';
+        if (fullText && !fullText.startsWith('@')) {
+          displayName = fullText;
+        }
+      }
+    }
+    
+    // Tweet text
     const replyText = el.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+    
+    // Avatar - check if custom (not default)
     const avatarEl = el.querySelector('img[src*="profile_images"]');
-    const hasCustomAvatar = avatarEl && !avatarEl.src.includes('default_profile');
-    const isVerified = !!el.querySelector('[data-testid="icon-verified"], svg[aria-label*="Verified"]');
+    const hasCustomAvatar = avatarEl ? !avatarEl.src.includes('default_profile') : true; // Assume custom if we can't tell
     
-    // Try to get real data from intercepted Twitter API
-    const twitterData = await requestUserData(username);
+    // Verified badge
+    const isVerified = !!(
+      el.querySelector('[data-testid="icon-verified"]') ||
+      el.querySelector('svg[aria-label*="Verified"]') ||
+      el.querySelector('[aria-label*="Verified"]')
+    );
     
-    // Use real data if available, otherwise use what we can extract from DOM
+    // Location from our cache (if we've looked up this user before)
+    const cachedLocation = locationCache.get(username.toLowerCase());
+    
     return {
       username,
-      displayName: twitterData?.displayName || displayName,
+      displayName,
       replyText,
-      bio: twitterData?.bio || '',
-      followers: twitterData?.followers || 0,
-      following: twitterData?.following || 0,
-      createdAt: twitterData?.createdAt || '',
-      hasCustomAvatar: twitterData?.hasCustomAvatar ?? hasCustomAvatar,
-      isVerified: twitterData?.verified || isVerified,
-      location: twitterData?.location || locationCache.get(username)?.location || null,
-      // Mark if we have real data (affects scoring - unknown = skip that signal)
-      hasTwitterData: !!twitterData,
+      bio: '', // Not available from DOM - server can still analyze other signals
+      followers: 0, // Not available from DOM
+      following: 0, // Not available from DOM
+      createdAt: '', // Not available from DOM
+      hasCustomAvatar,
+      isVerified,
+      location: cachedLocation?.location || null,
+      // DOM-only mode - scoring should rely on content/name signals
+      hasTwitterData: false,
       userFollows: false,
       mutualCount: 0
     };
   } catch (e) {
+    console.error('Error extracting reply data:', e);
     return null;
   }
 }
@@ -1225,11 +1275,17 @@ function scheduleBotProcessing() {
 }
 
 async function processBotDetectionBatch() {
-  const tweets = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
-  if (tweets.length === 0) return;
+  const allTweets = document.querySelectorAll('article[data-testid="tweet"]');
+  const unprocessed = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
+  
+  if (unprocessed.length === 0) return;
+  
+  // Log diagnostic info 
+  const usernames = Array.from(unprocessed).map(el => extractUsername(el)).filter(Boolean);
+  console.log(`🤖 Batch: ${unprocessed.length} unprocessed (${usernames.slice(0, 5).map(u => '@' + u).join(', ')}${usernames.length > 5 ? '...' : ''})`);
   
   // Only process visible tweets
-  const visible = Array.from(tweets).filter(el => {
+  const visible = Array.from(unprocessed).filter(el => {
     const rect = el.getBoundingClientRect();
     return rect.top < window.innerHeight + 200 && rect.bottom > -200;
   });
@@ -1250,6 +1306,37 @@ async function processBotDetectionBatch() {
 function processBotDetectionForReplies() {
   scheduleBotProcessing();
 }
+
+// Debug function: Force reprocess all tweets (call from console: forceReprocessBots())
+window.forceReprocessBots = async function() {
+  const allTweets = document.querySelectorAll('article[data-testid="tweet"]');
+  console.log(`🔧 Force reprocessing ${allTweets.length} tweets...`);
+  
+  // Reset processed flags
+  allTweets.forEach(el => {
+    delete el.dataset.botProcessed;
+  });
+  
+  // Process all
+  for (const el of allTweets) {
+    await processBotDetection(el);
+  }
+  
+  console.log('🔧 Done!');
+};
+
+// Debug function: Show all tweet usernames on page
+window.debugShowTweets = function() {
+  const allTweets = document.querySelectorAll('article[data-testid="tweet"]');
+  const data = Array.from(allTweets).map(el => ({
+    username: extractUsername(el),
+    processed: el.dataset.botProcessed,
+    hasUserName: !!el.querySelector('[data-testid="UserName"], [data-testid="User-Name"]'),
+    tweetText: el.querySelector('[data-testid="tweetText"]')?.textContent?.slice(0, 50)
+  }));
+  console.table(data);
+  return data;
+};
 
 // Wait for page to load
 if (document.readyState === 'loading') {
