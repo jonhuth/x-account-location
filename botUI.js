@@ -399,6 +399,32 @@ function initBotUI() {
   injectBotStyles();
 }
 
+// ============================================================================
+// Debug: Test UI on any tweet (call from console)
+// Usage: BotUI.testOnTweet() or BotUI.testOnTweet('high') or BotUI.testOnTweet('medium')
+// ============================================================================
+
+function testOnTweet(severity = 'high') {
+  const tweet = document.querySelector('article[data-testid="tweet"]:not([data-bot-verdict])');
+  if (!tweet) {
+    console.log('No unprocessed tweets found');
+    return;
+  }
+  
+  const verdict = {
+    username: 'test_bot_' + Date.now(),
+    isBot: true,
+    confidence: severity === 'high' ? 0.92 : 0.65,
+    category: 'crypto_spam',
+    reason: 'DEBUG: Testing bot UI overlay',
+    source: 'debug',
+    expiry: Date.now() + 60000 // 1 minute
+  };
+  
+  applyBotUI(tweet, verdict);
+  console.log(`✅ Applied ${severity} bot UI to tweet. Verdict:`, verdict);
+}
+
 // Export
 if (typeof window !== 'undefined') {
   window.BotUI = {
@@ -408,6 +434,7 @@ if (typeof window !== 'undefined') {
     updateBotVerdict,
     removeAllBotUI,
     createBotBadge,
+    testOnTweet,  // Debug function
     CATEGORY_LABELS,
   };
 }
