@@ -14,13 +14,15 @@ app.use(
 	cors({
 		origin: (origin) => {
 			// Allow Chrome extensions and localhost for development
-			if (!origin) return "http://localhost:3000";
+			if (!origin) return "*";
 			if (origin.startsWith("chrome-extension://")) return origin;
 			if (origin.includes("localhost")) return origin;
+			// Allow x.com and twitter.com (content script context)
+			if (origin === "https://x.com" || origin === "https://twitter.com") return origin;
 			// Allow configured origins
 			const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") ?? [];
 			if (allowedOrigins.includes(origin)) return origin;
-			return "http://localhost:3000";
+			return origin; // Allow all for now - API is rate limited anyway
 		},
 		allowMethods: ["GET", "POST", "OPTIONS"],
 		allowHeaders: ["Content-Type"],

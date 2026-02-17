@@ -111,8 +111,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }, 500);
     } else {
       // Remove all bot UI
-      if (typeof removeAllBotUI === 'function') {
-        removeAllBotUI();
+      if (window.BotUI?.removeAllBotUI) {
+        window.BotUI.removeAllBotUI();
       }
     }
   } else if (request.type === 'botSensitivityChange') {
@@ -129,8 +129,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.type === 'botLookup') {
     // Bot lookup request from popup
     const username = request.username;
-    if (typeof lookupUsername === 'function') {
-      lookupUsername(username).then(verdict => {
+    if (window.BotCache?.lookupUsername) {
+      window.BotCache.lookupUsername(username).then(verdict => {
         sendResponse({ verdict });
       }).catch(err => {
         console.error('Bot lookup error:', err);
@@ -151,8 +151,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // Remove all UI
     removeAllFlags();
-    if (typeof removeAllBotUI === 'function') {
-      removeAllBotUI();
+    if (window.BotUI?.removeAllBotUI) {
+      window.BotUI.removeAllBotUI();
     }
     
     // Re-initialize
@@ -1231,23 +1231,44 @@ async function init() {
   
   // Initialize bot detection (after page script is ready)
   if (botDetectionEnabled) {
-    console.log('Initializing bot detection...');
+    console.log('🤖 Initializing bot detection...');
+    
+    // Check which modules are available
+    console.log('🤖 Available modules:', {
+      BotDetection: !!window.BotDetection,
+      BotUI: !!window.BotUI,
+      BotCache: !!window.BotCache,
+      BotLegitimacy: !!window.BotLegitimacy,
+    });
+    
     // Inject bot detection UI styles
-    if (typeof injectBotStyles === 'function') {
-      injectBotStyles();
+    if (window.BotUI?.injectBotStyles) {
+      window.BotUI.injectBotStyles();
+      console.log('🤖 Bot styles injected');
+    } else {
+      console.warn('🤖 BotUI.injectBotStyles not available');
     }
     // Load bot verdict cache
-    if (typeof loadBotCache === 'function') {
-      await loadBotCache();
+    if (window.BotCache?.loadBotCache) {
+      await window.BotCache.loadBotCache();
+      console.log('🤖 Bot cache loaded');
+    } else {
+      console.warn('🤖 BotCache.loadBotCache not available');
     }
     // Load whitelist
-    if (typeof loadWhitelist === 'function') {
-      await loadWhitelist();
+    if (window.BotCache?.loadWhitelist) {
+      await window.BotCache.loadWhitelist();
+      console.log('🤖 Whitelist loaded');
     }
     // Initialize legitimacy tracking (needs page script)
-    if (typeof initLegitimacy === 'function') {
-      initLegitimacy();
+    if (window.BotLegitimacy?.initLegitimacy) {
+      window.BotLegitimacy.initLegitimacy();
+      console.log('🤖 Legitimacy tracking initialized');
+    } else {
+      console.warn('🤖 BotLegitimacy.initLegitimacy not available');
     }
+  } else {
+    console.log('🤖 Bot detection is disabled');
   }
   setupObservers();
   
@@ -1266,9 +1287,20 @@ async function init() {
 // Bot Detection Integration
 // ============================================================================
 
+// Helper: Get bot detection functions from namespaced modules
+const BotModules = {
+  get Detection() { return window.BotDetection; },
+  get UI() { return window.BotUI; },
+  get Cache() { return window.BotCache; },
+  get Legitimacy() { return window.BotLegitimacy; },
+};
+
 // Process a reply element for bot detection
 async function processBotDetection(replyElement) {
-  if (!botDetectionEnabled) return;
+  if (!botDetectionEnabled) {
+    console.log('🤖 Bot detection disabled, skipping');
+    return;
+  }
   if (replyElement.dataset.botProcessed === 'true') return;
   
   // Mark as processing
@@ -1276,31 +1308,41 @@ async function processBotDetection(replyElement) {
   
   const username = extractUsername(replyElement);
   if (!username) {
+    console.log('🤖 No username found in element');
     replyElement.dataset.botProcessed = 'failed';
     return;
   }
   
+  console.log(`🤖 Processing @${username}`);
+  
   // Check whitelist first
-  if (typeof isWhitelisted === 'function' && isWhitelisted(username)) {
+  if (BotModules.Cache?.isWhitelisted?.(username)) {
+    console.log(`🤖 @${username} is whitelisted`);
     replyElement.dataset.botProcessed = 'whitelisted';
     return;
   }
   
   // Check cache first (instant)
-  if (typeof getCachedVerdict === 'function') {
-    const cached = getCachedVerdict(username);
+  if (BotModules.Cache?.getCachedVerdict) {
+    const cached = BotModules.Cache.getCachedVerdict(username);
     if (cached) {
-      if (typeof applyBotUI === 'function') {
-        applyBotUI(replyElement, cached);
+      console.log(`🤖 @${username} cached verdict:`, cached.isBot ? 'BOT' : 'HUMAN');
+      if (BotModules.UI?.applyBotUI) {
+        BotModules.UI.applyBotUI(replyElement, cached);
+      } else {
+        console.warn('🤖 BotUI.applyBotUI not available');
       }
       replyElement.dataset.botProcessed = 'true';
       return;
     }
+  } else {
+    console.warn('🤖 BotCache.getCachedVerdict not available');
   }
   
   // Extract reply data for heuristics
   const replyData = extractReplyData(replyElement, username);
   if (!replyData) {
+    console.log(`🤖 Failed to extract data for @${username}`);
     replyElement.dataset.botProcessed = 'failed';
     return;
   }
@@ -1317,21 +1359,25 @@ async function processBotDetection(replyElement) {
   let heuristicScore = 0;
   let action = 'none';
   
-  if (typeof calculateBotScore === 'function') {
+  if (BotModules.Detection?.calculateBotScore) {
     // Add legitimacy context
-    if (typeof getUserContext === 'function') {
-      const userContext = await getUserContext(username);
+    if (BotModules.Legitimacy?.getUserContext) {
+      const userContext = await BotModules.Legitimacy.getUserContext(username);
       replyData.userFollows = userContext.userFollows;
       replyData.mutualCount = userContext.mutualCount;
     }
     
-    const result = calculateBotScore(replyData, botSensitivity);
+    const result = BotModules.Detection.calculateBotScore(replyData, botSensitivity);
     heuristicScore = result.score;
     replyData.heuristicScore = heuristicScore;
     
-    if (typeof getActionForScore === 'function') {
-      action = getActionForScore(heuristicScore, botSensitivity);
+    if (BotModules.Detection.getActionForScore) {
+      action = BotModules.Detection.getActionForScore(heuristicScore, botSensitivity);
     }
+    
+    console.log(`🤖 @${username}: score=${heuristicScore}, action=${action}`, result.breakdown);
+  } else {
+    console.warn('🤖 BotDetection.calculateBotScore not available - scripts may not be loaded');
   }
   
   // Action based on heuristic score
@@ -1347,20 +1393,23 @@ async function processBotDetection(replyElement) {
       expiry: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
     };
     
-    if (typeof persistBotCache === 'function') {
-      persistBotCache(username, verdict);
+    console.log(`🤖 @${username}: DIMMING (bot score=${heuristicScore})`);
+    
+    if (BotModules.Cache?.persistBotCache) {
+      BotModules.Cache.persistBotCache(username, verdict);
     }
     
-    if (typeof applyBotUI === 'function') {
-      applyBotUI(replyElement, verdict);
+    if (BotModules.UI?.applyBotUI) {
+      BotModules.UI.applyBotUI(replyElement, verdict);
     }
     replyElement.dataset.botProcessed = 'true';
   } else if (action === 'ai') {
     // Uncertain - queue for AI classification
-    if (typeof queueForClassification === 'function') {
-      queueForClassification(replyData, (verdict) => {
-        if (verdict && typeof applyBotUI === 'function') {
-          applyBotUI(replyElement, verdict);
+    console.log(`🤖 @${username}: QUEUING for AI (score=${heuristicScore})`);
+    if (BotModules.Cache?.queueForClassification) {
+      BotModules.Cache.queueForClassification(replyData, (verdict) => {
+        if (verdict && BotModules.UI?.applyBotUI) {
+          BotModules.UI.applyBotUI(replyElement, verdict);
         }
         replyElement.dataset.botProcessed = 'true';
       });
@@ -1368,6 +1417,7 @@ async function processBotDetection(replyElement) {
     replyElement.dataset.botProcessed = 'pending';
   } else {
     // Low score - likely human
+    console.log(`🤖 @${username}: HUMAN (score=${heuristicScore})`);
     replyElement.dataset.botProcessed = 'human';
   }
 }
@@ -1418,14 +1468,22 @@ function extractReplyData(replyElement, username) {
 
 // Process bot detection for visible replies
 async function processBotDetectionForReplies() {
-  if (!botDetectionEnabled) return;
+  if (!botDetectionEnabled) {
+    console.log('🤖 processBotDetectionForReplies: disabled');
+    return;
+  }
   
   // Find reply elements (articles that are replies, not the main tweet)
   const replies = document.querySelectorAll('article[data-testid="tweet"]');
+  console.log(`🤖 Found ${replies.length} tweet elements`);
+  
+  let processed = 0;
+  let skipped = 0;
   
   for (const reply of replies) {
     // Skip if already processed
     if (reply.dataset.botProcessed && reply.dataset.botProcessed !== 'failed') {
+      skipped++;
       continue;
     }
     
@@ -1435,7 +1493,12 @@ async function processBotDetectionForReplies() {
     
     if (isVisible) {
       await processBotDetection(reply);
+      processed++;
     }
+  }
+  
+  if (processed > 0 || replies.length > 0) {
+    console.log(`🤖 Processed ${processed} tweets, skipped ${skipped} already-processed`);
   }
 }
 
