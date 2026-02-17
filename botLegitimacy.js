@@ -21,13 +21,11 @@ async function loadCachedFollowing() {
       if (cached.expiry && cached.expiry > Date.now()) {
         userFollowingSet = new Set(cached.usernames);
         followingCacheExpiry = cached.expiry;
-        console.log(`Loaded ${userFollowingSet.size} cached following entries`);
         return true;
       }
     }
     return false;
   } catch (error) {
-    console.error('Error loading following cache:', error);
     return false;
   }
 }
@@ -44,10 +42,7 @@ async function saveFollowingCache(usernames) {
       }
     });
     followingCacheExpiry = expiry;
-    console.log(`Saved ${usernames.size} following entries to cache`);
-  } catch (error) {
-    console.error('Error saving following cache:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 // Fetch user's following list from Twitter's internal API
@@ -67,8 +62,6 @@ async function fetchUserFollowing() {
         window.removeEventListener('message', handler);
         
         if (event.data.error) {
-          console.warn('Following fetch error:', event.data.error);
-          // Return empty array on error instead of rejecting - don't block bot detection
           resolve([]);
         } else {
           resolve(event.data.following || []);
@@ -88,8 +81,6 @@ async function fetchUserFollowing() {
     setTimeout(() => {
       if (!responded) {
         window.removeEventListener('message', handler);
-        console.warn('Following fetch timeout - page script may not be ready');
-        // Return empty array instead of rejecting - don't block bot detection
         resolve([]);
       }
     }, 30000);
@@ -120,15 +111,11 @@ async function loadUserFollowing(forceRefresh = false) {
   isLoadingFollowing = true;
   followingLoadPromise = (async () => {
     try {
-      console.log('Fetching user following list...');
       const following = await fetchUserFollowing();
       userFollowingSet = new Set(following.map(u => u.toLowerCase()));
       await saveFollowingCache(userFollowingSet);
-      console.log(`Loaded ${userFollowingSet.size} accounts user is following`);
       return userFollowingSet;
     } catch (error) {
-      console.error('Error fetching following list:', error);
-      // Return empty set on error (no legitimacy signals, but don't block)
       userFollowingSet = userFollowingSet || new Set();
       return userFollowingSet;
     } finally {
@@ -170,9 +157,7 @@ async function getUserContext(username) {
 // Initialize legitimacy system
 async function initLegitimacy() {
   // Try to load cached following in background (don't block)
-  loadUserFollowing().catch(err => {
-    console.warn('Failed to load following list:', err);
-  });
+  loadUserFollowing().catch(() => {});
 }
 
 // Export for use in content.js

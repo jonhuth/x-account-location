@@ -54,17 +54,10 @@ async function loadBotCache() {
       for (const [username, data] of Object.entries(cached)) {
         if (data.expiry && data.expiry > now) {
           botVerdictCache.set(username.toLowerCase(), data);
-          loaded++;
-        } else {
-          expired++;
         }
       }
-      
-      console.log(`Bot cache: loaded ${loaded}, expired ${expired}`);
     }
-  } catch (error) {
-    console.error('Error loading bot cache:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 // Save bot cache to chrome.storage (debounced)
@@ -95,10 +88,7 @@ async function persistBotCache() {
       cacheObj[username] = data;
     }
     await chrome.storage.local.set({ [BOT_CACHE_KEY]: cacheObj });
-    console.log(`Bot cache: persisted ${botVerdictCache.size} entries`);
-  } catch (error) {
-    console.error('Error persisting bot cache:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 // Get cached verdict (instant)
@@ -134,20 +124,15 @@ function isCircuitOpen() {
 
 function recordSuccess() {
   consecutiveErrors = 0;
-  if (backendCircuitOpen) {
-    console.log('Circuit breaker: closed (success)');
-    backendCircuitOpen = false;
-  }
+  backendCircuitOpen = false;
 }
 
 function recordError() {
   consecutiveErrors++;
   if (consecutiveErrors >= CIRCUIT_THRESHOLD && !backendCircuitOpen) {
     backendCircuitOpen = true;
-    // Exponential backoff: 1min, 2min, 4min, etc.
     const backoffMs = CIRCUIT_BASE_MS * Math.pow(2, consecutiveErrors - CIRCUIT_THRESHOLD);
     circuitOpenUntil = Date.now() + backoffMs;
-    console.warn(`Circuit breaker: OPEN for ${backoffMs / 1000}s (${consecutiveErrors} consecutive errors)`);
   }
 }
 
@@ -164,7 +149,6 @@ function queueForClassification(username, replyData) {
   
   // Coalesce: return existing promise if pending
   if (pendingBotRequests.has(key)) {
-    console.log(`Bot: coalescing request for @${username}`);
     return pendingBotRequests.get(key);
   }
   
@@ -197,11 +181,8 @@ async function dispatchBatch() {
   const batch = botClassificationQueue.splice(0, BOT_BATCH_SIZE);
   if (batch.length === 0) return;
   
-  console.log(`Bot: dispatching batch of ${batch.length} for AI classification`);
-  
   // Check circuit breaker
   if (isCircuitOpen()) {
-    console.warn('Bot: circuit open, returning fallback verdicts');
     batch.forEach(item => {
       const fallback = createFallbackVerdict('circuit_open');
       pendingBotRequests.delete(item.username);
@@ -235,9 +216,7 @@ async function dispatchBatch() {
     });
     
   } catch (error) {
-    console.error('Bot: batch classification error:', error);
     recordError();
-    
     // Resolve all as fallback
     batch.forEach(item => {
       const fallback = createFallbackVerdict('error');
@@ -314,7 +293,6 @@ async function lookupUsername(username, context = {}) {
     return { ...createFallbackVerdict('no_verdict'), cached: false };
     
   } catch (error) {
-    console.error('Bot: lookup error:', error);
     recordError();
     return { ...createFallbackVerdict('error'), cached: false };
   }
@@ -332,11 +310,8 @@ async function loadWhitelist() {
     const result = await chrome.storage.local.get(WHITELIST_KEY);
     if (result[WHITELIST_KEY]) {
       whitelistSet = new Set(result[WHITELIST_KEY].map(u => u.toLowerCase()));
-      console.log(`Bot: loaded ${whitelistSet.size} whitelisted accounts`);
     }
-  } catch (error) {
-    console.error('Error loading whitelist:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 async function addToWhitelist(username) {
@@ -345,12 +320,8 @@ async function addToWhitelist(username) {
     await chrome.storage.local.set({
       [WHITELIST_KEY]: Array.from(whitelistSet)
     });
-    // Remove from bot cache if present
     botVerdictCache.delete(username.toLowerCase());
-    console.log(`Bot: whitelisted @${username}`);
-  } catch (error) {
-    console.error('Error saving whitelist:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 async function removeFromWhitelist(username) {
@@ -359,10 +330,7 @@ async function removeFromWhitelist(username) {
     await chrome.storage.local.set({
       [WHITELIST_KEY]: Array.from(whitelistSet)
     });
-    console.log(`Bot: removed @${username} from whitelist`);
-  } catch (error) {
-    console.error('Error saving whitelist:', error);
-  }
+  } catch (error) { /* ignore */ }
 }
 
 function isWhitelisted(username) {

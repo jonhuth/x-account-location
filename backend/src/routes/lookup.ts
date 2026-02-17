@@ -31,20 +31,26 @@ app.get("/:username", async (c) => {
 	const following = Number(c.req.query("following")) || 0;
 	const isVerified = c.req.query("verified") === "true";
 
+	// Use null/unknown for missing data instead of fake defaults
+	// AI should treat missing data as neutral, not suspicious
+	const createdAt = c.req.query("createdAt");
+	const hasAvatar = c.req.query("hasAvatar");
+	const heuristicScore = c.req.query("heuristicScore");
+
 	const replyData: ReplyData = {
 		username,
 		displayName,
-		replyText: c.req.query("replyText") ?? "[No reply text provided - lookup mode]",
+		replyText: c.req.query("replyText") ?? "",
 		originalTweetText: "",
 		bio,
 		followers,
 		following,
-		accountCreatedAt: c.req.query("createdAt") ?? new Date().toISOString(),
-		hasCustomAvatar: c.req.query("hasAvatar") !== "false",
+		accountCreatedAt: createdAt ?? "", // Empty = unknown, not "just created"
+		hasCustomAvatar: hasAvatar !== "false", // Assume avatar exists if unknown or true
 		isVerified,
 		location: c.req.query("location") ?? null,
 		secondsAfterOriginal: 0,
-		heuristicScore: Number(c.req.query("heuristicScore")) || 50,
+		heuristicScore: heuristicScore ? Number(heuristicScore) : 0, // 0 = no heuristic data
 		userFollows: c.req.query("userFollows") === "true",
 		mutualCount: Number(c.req.query("mutualCount")) || 0,
 	};

@@ -88,32 +88,29 @@ const SPAM_REGION_TIERS = {
 function getCoreSignals(accountData, replyElement) {
   let score = 0;
   
-  // Account age: Created < 90 days + high activity (10 points)
-  if (accountData.createdAt) {
+  // Account age: Created < 90 days (only with real data)
+  if (accountData.hasTwitterData && accountData.createdAt) {
     try {
       const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
       const ageDays = ageMs / (24 * 60 * 60 * 1000);
       if (ageDays < 30) score += 10;
       else if (ageDays < 90) score += 5;
-    } catch (e) {
-      // Invalid date, skip
-    }
+    } catch (e) { /* Invalid date */ }
   }
   
-  // Default avatar (5 points)
-  if (!accountData.hasCustomAvatar) {
+  // Default avatar (5 points) - skip if unknown
+  if (accountData.hasCustomAvatar === false) {
     score += 5;
   }
   
   // Handle pattern: random suffix, underscores + numbers (10 points)
-  // Defensive: ensure string
   const username = String(accountData.username || '');
   if (/[a-z]+\d{6,}$/i.test(username)) score += 10;
   else if (/_\d{3,}$/.test(username)) score += 7;
   else if (/\d{4,}$/.test(username)) score += 5;
   
   // Reply timing: within 60s of original (15 points)
-  if (accountData.secondsAfterOriginal !== undefined) {
+  if (typeof accountData.secondsAfterOriginal === 'number' && accountData.secondsAfterOriginal > 0) {
     if (accountData.secondsAfterOriginal < 30) score += 15;
     else if (accountData.secondsAfterOriginal < 60) score += 10;
     else if (accountData.secondsAfterOriginal < 120) score += 5;
@@ -221,6 +218,9 @@ function getBehavioralSignals(accountData, threadContext = {}) {
     score += 8;
   }
   
+  // Skip ratio-based signals if we don't have real Twitter data
+  if (!accountData.hasTwitterData) return Math.min(score, 20);
+  
   // Engagement ratio: Following >> Followers (7 points)
   const followers = accountData.followers || 0;
   const following = accountData.following || 0;
@@ -236,11 +236,13 @@ function getBehavioralSignals(accountData, threadContext = {}) {
   
   // High activity on new account
   if (accountData.createdAt) {
-    const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-    const ageDays = ageMs / (24 * 60 * 60 * 1000);
-    if (ageDays < 90 && following > 500) {
-      score += 5;
-    }
+    try {
+      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
+      const ageDays = ageMs / (24 * 60 * 60 * 1000);
+      if (ageDays < 90 && following > 500) {
+        score += 5;
+      }
+    } catch (e) { /* invalid date */ }
   }
   
   return Math.min(score, 20);
@@ -306,21 +308,26 @@ function calculateLegitimacyReduction(accountData, userContext = {}) {
   else if (mutualCount >= 2) reduction -= 10;
   else if (mutualCount >= 1) reduction -= 5;
   
-  // Follower ratio
+  // Verified from DOM - -15
+  if (accountData.isVerified) reduction -= 15;
+  
+  // Skip data-dependent signals if we don't have real Twitter data
+  if (!accountData.hasTwitterData) return reduction;
+  
+  // Follower ratio (only with real data)
   reduction += getFollowerRatioReduction(
     accountData.followers || 0, 
     accountData.following || 0
   );
   
-  // Verified - -15
-  if (accountData.isVerified) reduction -= 15;
-  
   // Account age > 2 years - -10
   if (accountData.createdAt) {
-    const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-    const ageYears = ageMs / (365 * 24 * 60 * 60 * 1000);
-    if (ageYears >= 2) reduction -= 10;
-    else if (ageYears >= 1) reduction -= 5;
+    try {
+      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
+      const ageYears = ageMs / (365 * 24 * 60 * 60 * 1000);
+      if (ageYears >= 2) reduction -= 10;
+      else if (ageYears >= 1) reduction -= 5;
+    } catch (e) { /* invalid date */ }
   }
   
   // High followers (absolute) - -5 to -15

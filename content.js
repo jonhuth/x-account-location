@@ -69,12 +69,9 @@ async function loadEnabledState() {
   try {
     const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY]);
     extensionEnabled = result[TOGGLE_KEY] !== undefined ? result[TOGGLE_KEY] : DEFAULT_ENABLED;
-    botDetectionEnabled = result[BOT_TOGGLE_KEY] !== false; // Default enabled
+    botDetectionEnabled = result[BOT_TOGGLE_KEY] !== false;
     botSensitivity = result[BOT_SENSITIVITY_KEY] || 3;
-    console.log('Extension enabled:', extensionEnabled);
-    console.log('Bot detection enabled:', botDetectionEnabled, 'sensitivity:', botSensitivity);
   } catch (error) {
-    console.error('Error loading enabled state:', error);
     extensionEnabled = DEFAULT_ENABLED;
     botDetectionEnabled = true;
     botSensitivity = 3;
@@ -85,77 +82,36 @@ async function loadEnabledState() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'extensionToggle') {
     extensionEnabled = request.enabled;
-    console.log('Extension toggled:', extensionEnabled);
-    
-    if (extensionEnabled) {
-      // Re-initialize if enabled
-      setTimeout(() => {
-        processUsernamesThrottled();
-      }, 500);
-    } else {
-      // Remove all flags if disabled
-      removeAllFlags();
-    }
+    if (extensionEnabled) setTimeout(processUsernamesThrottled, 500);
+    else removeAllFlags();
   } else if (request.type === 'resetStats') {
-    // Clear in-memory statistics
     locationStats.clear();
-    console.log('Statistics reset');
   } else if (request.type === 'botDetectionToggle') {
     botDetectionEnabled = request.enabled;
-    console.log('Bot detection toggled:', botDetectionEnabled);
-    
-    if (botDetectionEnabled) {
-      // Re-process visible elements for bot detection
-      setTimeout(() => {
-        processUsernamesThrottled();
-      }, 500);
-    } else {
-      // Remove all bot UI
-      if (window.BotUI?.removeAllBotUI) {
-        window.BotUI.removeAllBotUI();
-      }
-    }
+    if (botDetectionEnabled) setTimeout(processUsernamesThrottled, 500);
+    else window.BotUI?.removeAllBotUI?.();
   } else if (request.type === 'botSensitivityChange') {
     botSensitivity = request.sensitivity;
-    console.log('Bot sensitivity changed:', botSensitivity);
   } else if (request.type === 'botWhitelistUpdate') {
-    // Whitelist updated - re-process visible elements
-    console.log('Bot whitelist updated');
-    if (botDetectionEnabled) {
-      setTimeout(() => {
-        processUsernamesThrottled();
-      }, 500);
-    }
+    if (botDetectionEnabled) setTimeout(processUsernamesThrottled, 500);
   } else if (request.type === 'botLookup') {
-    // Bot lookup request from popup
     const username = request.username;
     if (window.BotCache?.lookupUsername) {
       window.BotCache.lookupUsername(username).then(verdict => {
         sendResponse({ verdict });
-      }).catch(err => {
-        console.error('Bot lookup error:', err);
-        sendResponse({ verdict: null });
-      });
-      return true; // Keep message channel open for async response
+      }).catch(() => sendResponse({ verdict: null }));
+      return true;
     } else {
       sendResponse({ verdict: null });
     }
   } else if (request.type === 'dataCleared') {
-    // All data cleared - reset state
-    console.log('All data cleared, resetting state');
     locationCache.clear();
     locationStats.clear();
     botDetectionEnabled = true;
     botSensitivity = 3;
     extensionEnabled = true;
-    
-    // Remove all UI
     removeAllFlags();
-    if (window.BotUI?.removeAllBotUI) {
-      window.BotUI.removeAllBotUI();
-    }
-    
-    // Re-initialize
+    window.BotUI?.removeAllBotUI?.();
     setTimeout(init, 500);
   }
 });
@@ -163,10 +119,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 // Load cache from persistent storage
 async function loadCache() {
   try {
-    if (!isExtensionContextValid()) {
-      console.log('Extension context invalidated, skipping cache load');
-      return;
-    }
+    if (!isExtensionContextValid()) return;
     
     const result = await chrome.storage.local.get(CACHE_KEY);
     if (result[CACHE_KEY]) {
@@ -190,17 +143,11 @@ async function loadCache() {
           }
         }
       }
-      const validCount = Array.from(locationCache.values()).filter(e => e.location !== null).length;
-      const nullCount = Array.from(locationCache.values()).filter(e => e.location === null).length;
-      console.log(`Loaded ${locationCache.size} cached entries (${validCount} valid, ${nullCount} null)`);
-      console.log(`Rebuilt stats for ${locationStats.size} locations`);
     }
   } catch (error) {
-    // Extension context invalidated errors are expected when extension is reloaded
-    if (error.message?.includes('Extension context invalidated') || 
-        error.message?.includes('message port closed')) {
-      console.log('Extension context invalidated, cache load skipped');
-    } else {
+    // Silently ignore context invalidation errors
+    if (!error.message?.includes('Extension context invalidated') && 
+        !error.message?.includes('message port closed')) {
       console.error('Error loading cache:', error);
     }
   }
@@ -263,16 +210,8 @@ async function checkStorageUsage() {
 // Save cache to persistent storage (batch save)
 async function saveCache() {
   try {
-    if (!isExtensionContextValid()) {
-      console.log('Extension context invalidated, skipping cache save');
-      return;
-    }
-    
-    if (!(await canWriteToStorage())) {
-      const percent = await checkStorageUsage();
-      console.error(`❌ Storage at ${percent}% - cannot save cache. Please upgrade storage method.`);
-      return;
-    }
+    if (!isExtensionContextValid()) return;
+    if (!(await canWriteToStorage())) return;
     
     const cacheObj = {};
     const now = Date.now();
@@ -286,23 +225,17 @@ async function saveCache() {
       };
     }
     
-    // Save cache and stats together
     const statsObj = {};
     for (const [location, usernames] of locationStats.entries()) {
       statsObj[location] = usernames.size;
     }
     
-    await chrome.storage.local.set({
-      [CACHE_KEY]: cacheObj,
-      [STATS_KEY]: statsObj
-    });
-    
+    await chrome.storage.local.set({ [CACHE_KEY]: cacheObj, [STATS_KEY]: statsObj });
     await checkStorageUsage();
   } catch (error) {
-    if (error.message?.includes('Extension context invalidated') || 
-        error.message?.includes('message port closed')) {
-      console.log('Extension context invalidated, cache save skipped');
-    } else {
+    // Silently ignore context invalidation errors
+    if (!error.message?.includes('Extension context invalidated') && 
+        !error.message?.includes('message port closed')) {
       console.error('Error saving cache:', error);
     }
   }
@@ -311,20 +244,10 @@ async function saveCache() {
 // Load statistics from persistent storage
 async function loadStats() {
   try {
-    if (!isExtensionContextValid()) {
-      console.log('Extension context invalidated, skipping stats load');
-      return;
-    }
-    
-    const result = await chrome.storage.local.get(STATS_KEY);
-    if (result[STATS_KEY]) {
-      const stats = result[STATS_KEY];
-      // Convert counts back to Sets for deduplication (we'll rebuild from cache)
-      // For now, just store the counts - we'll rebuild Sets as we process new entries
-      console.log(`Loaded stats for ${Object.keys(stats).length} locations`);
-    }
+    if (!isExtensionContextValid()) return;
+    await chrome.storage.local.get(STATS_KEY);
   } catch (error) {
-    console.error('Error loading stats:', error);
+    // Silently ignore
   }
 }
 
@@ -393,11 +316,7 @@ function injectPageScript() {
       // Use the longer of: API-reported reset time or exponential backoff
       const apiResetTime = event.data.resetTime;
       const exponentialResetTime = Math.floor(Date.now() / 1000) + exponentialWaitSeconds;
-      
       rateLimitResetTime = Math.max(apiResetTime, exponentialResetTime);
-      
-      const waitMinutes = Math.ceil((rateLimitResetTime - Math.floor(Date.now() / 1000)) / 60);
-      console.warn(`🚫 RATE LIMIT #${consecutiveRateLimits}: Exponential backoff active. Will resume in ${waitMinutes} minutes (backoff: ${baseWaitMinutes}min base × 2^${consecutiveRateLimits - 1})`);
     }
   });
 }
@@ -409,9 +328,6 @@ function isRateLimited() {
 }
 
 function resetRateLimit() {
-  if (consecutiveRateLimits > 0) {
-    console.log(`✅ Rate limit cleared after ${consecutiveRateLimits} consecutive limit${consecutiveRateLimits > 1 ? 's' : ''}. Resuming normal operation.`);
-  }
   rateLimitResetTime = 0;
   consecutiveRateLimits = 0;
 }
@@ -426,26 +342,15 @@ async function processRequestQueue() {
   if (isRateLimited()) {
     const now = Math.floor(Date.now() / 1000);
     const waitTime = (rateLimitResetTime - now) * 1000;
-    const waitMinutes = Math.ceil(waitTime / 1000 / 60);
-    console.log(`⏸️  Rate limited. Waiting ${waitMinutes} minutes... (${consecutiveRateLimits} consecutive rate limit${consecutiveRateLimits > 1 ? 's' : ''})`);
-    
-    // Reject pending requests
     while (requestQueue.length > 0) {
       requestQueue.shift().reject(new Error('Rate limited'));
     }
-    
     setTimeout(processRequestQueue, Math.min(waitTime, 60000));
     return;
   }
   
   // Rate limit expired, reset if needed
-  if (rateLimitResetTime > 0) {
-    resetRateLimit();
-  }
-  
-  if (requestQueue.length > 0) {
-    console.log(`Processing queue: ${requestQueue.length} requests pending, ${activeRequests} active`);
-  }
+  if (rateLimitResetTime > 0) resetRateLimit();
   
   isProcessingQueue = true;
   
@@ -465,11 +370,7 @@ async function processRequestQueue() {
     // Make the request
     try {
       const location = await makeLocationRequest(screenName);
-      // Successful request - reset consecutive rate limit counter
-      if (consecutiveRateLimits > 0) {
-        console.log(`✅ Successful request after ${consecutiveRateLimits} rate limit${consecutiveRateLimits > 1 ? 's' : ''}. Resetting backoff.`);
-        consecutiveRateLimits = 0;
-      }
+      if (consecutiveRateLimits > 0) consecutiveRateLimits = 0;
       resolve(location);
     } catch (error) {
       reject(error);
@@ -503,8 +404,6 @@ function makeLocationRequest(screenName) {
         // Only cache if not rate limited (don't cache failures due to rate limiting)
         if (!isRateLimited) {
           saveCacheEntry(screenName, location || null);
-        } else {
-          console.warn(`⚠️  Not caching null for ${screenName} due to rate limit`);
         }
         
         resolve(location || null);
@@ -522,10 +421,7 @@ function makeLocationRequest(screenName) {
     // Timeout
     setTimeout(() => {
       window.removeEventListener('message', handler);
-      // Remove from pending requests on timeout
       pendingLocationRequests.delete(screenName);
-      // Don't cache timeout failures - allow retry
-      console.log(`Request timeout for ${screenName}, not caching`);
       resolve(null);
     }, REQUEST_TIMEOUT);
   });
@@ -545,51 +441,32 @@ function createLocationInfo(location) {
 }
 
 // Get location for a username (checks cache first, then API)
-// Returns: { location: string|null, flag: string|null, displayText: string }
 async function getLocation(screenName) {
   // Check cache first
   if (locationCache.has(screenName)) {
     const cached = locationCache.get(screenName);
-    const now = Date.now();
-    
-    if (cached.expiry && cached.expiry > now) {
-      const locationInfo = createLocationInfo(cached.location);
-      const display = locationInfo.flag || locationInfo.displayText || 'null';
-      console.log(`✅ CACHE HIT: @${screenName} → ${display} (${cached.location || 'no location'})`);
-      return locationInfo;
+    if (cached.expiry && cached.expiry > Date.now()) {
+      return createLocationInfo(cached.location);
     }
-    
-    // Cache expired, remove it
-    console.log(`⏰ Cache expired for ${screenName}, removing`);
     locationCache.delete(screenName);
   }
   
-  // Check if there's already a pending request for this username
+  // Check if there's already a pending request
   if (pendingLocationRequests.has(screenName)) {
-    console.log(`⏳ Waiting for pending request for @${screenName}`);
     const location = await pendingLocationRequests.get(screenName);
-    
-    // After waiting, check cache again - it might have been updated
     if (locationCache.has(screenName)) {
       const cached = locationCache.get(screenName);
       if (cached.expiry && cached.expiry > Date.now()) {
-        const locationInfo = createLocationInfo(cached.location);
-        const display = locationInfo.flag || locationInfo.displayText || 'null';
-        console.log(`✅ CACHE HIT (after wait): @${screenName} → ${display}`);
-        return locationInfo;
+        return createLocationInfo(cached.location);
       }
     }
-    
     return createLocationInfo(location);
   }
   
-  // Not in cache or expired, need to fetch from API
+  // Queue full - skip
   if (requestQueue.length >= MAX_QUEUE_SIZE) {
-    console.warn(`Queue full (${requestQueue.length}/${MAX_QUEUE_SIZE}), rejecting request for ${screenName}`);
     return { location: null, flag: null, displayText: null };
   }
-  
-  console.log(`📡 API REQUEST: @${screenName} (queue: ${requestQueue.length}/${MAX_QUEUE_SIZE})`);
   
   // Create the promise for this request and store it
   const locationPromise = new Promise((resolve, reject) => {
@@ -849,59 +726,34 @@ async function addFlagToUsername(usernameElement, screenName) {
       try {
         userNameContainer.appendChild(shimmerSpan);
         shimmerInserted = true;
-      } catch (e) {
-        console.log('Failed to insert shimmer');
-      }
+      } catch (e) { /* ignore */ }
     }
   }
   
   try {
-    console.log(`Processing flag for ${screenName}...`);
-
-    // Get location info (flag || country || region)
     const locationInfo = await getLocation(screenName);
-    
-    // Remove shimmer
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
+    if (shimmerInserted && shimmerSpan.parentNode) shimmerSpan.remove();
     
     if (!locationInfo || !locationInfo.location) {
-      console.log(`No location found for ${screenName}, marking as failed`);
       usernameElement.dataset.flagAdded = 'failed';
       return;
     }
 
-    console.log(`Location info for ${screenName}:`, locationInfo);
-
-    // Use the helper function to add the flag
     const success = addFlagToElement(usernameElement, screenName, locationInfo);
     
     if (success) {
-      console.log(`✓ Successfully added ${locationInfo.displayText} for ${screenName} (${locationInfo.location})`);
-      
-      // Also mark any other containers waiting for this username
-      const waitingContainers = document.querySelectorAll(`[data-flag-added="waiting"]`);
-      waitingContainers.forEach(container => {
-        const waitingUsername = extractUsername(container);
-        if (waitingUsername === screenName) {
-          // Try to add flag to this container too
+      // Also mark other containers waiting for this username
+      document.querySelectorAll('[data-flag-added="waiting"]').forEach(container => {
+        if (extractUsername(container) === screenName) {
           addFlagToUsername(container, screenName).catch(() => {});
         }
       });
     } else {
-      console.error(`✗ Failed to insert flag for ${screenName}`);
       usernameElement.dataset.flagAdded = 'failed';
     }
   } catch (error) {
-    console.error(`Error processing flag for ${screenName}:`, error);
-    // Remove shimmer on error
-    if (shimmerInserted && shimmerSpan.parentNode) {
-      shimmerSpan.remove();
-    }
+    if (shimmerInserted && shimmerSpan.parentNode) shimmerSpan.remove();
     usernameElement.dataset.flagAdded = 'failed';
-  } finally {
-    // Note: pendingLocationRequests is cleaned up in getLocation() when promise resolves/rejects
   }
 }
 
@@ -915,12 +767,9 @@ function removeAllFlags() {
   shimmers.forEach(shimmer => shimmer.remove());
   
   // Reset flag added markers
-  const containers = document.querySelectorAll('[data-flag-added]');
-  containers.forEach(container => {
+  document.querySelectorAll('[data-flag-added]').forEach(container => {
     delete container.dataset.flagAdded;
   });
-  
-  console.log('Removed all flags');
 }
 
 // Throttled wrapper for processUsernames
@@ -987,8 +836,6 @@ function addFlagFromCache(container, screenName) {
   if (cached.expiry && cached.expiry > now && cached.location !== null) {
     const locationInfo = createLocationInfo(cached.location);
     if (addFlagToElement(container, screenName, locationInfo)) {
-      const display = locationInfo.flag || locationInfo.displayText || 'null';
-      console.log(`✅ CACHE HIT (display): @${screenName} → ${display}`);
       return true;
     }
   }
@@ -1019,7 +866,6 @@ async function processVisibleUsernames(containers) {
     }
   }
   
-  console.log(`Found ${visibleContainers.length} visible and ${offScreenContainers.length} off-screen containers`);
   
   // First pass: Check cache for all visible containers and display immediately
   let cachedCount = 0;
@@ -1041,7 +887,6 @@ async function processVisibleUsernames(containers) {
     }
   }
   
-  console.log(`Found ${cachedCount} cached accounts, ${uncachedContainers.length} need API calls`);
   
   // Second pass: Process uncached containers in batches (API calls)
   // Deduplicate usernames to avoid duplicate API calls
@@ -1057,7 +902,6 @@ async function processVisibleUsernames(containers) {
   }
   
   const uniqueUsernameList = Array.from(uniqueUsernames.keys());
-  console.log(`Processing ${uniqueUsernameList.length} unique usernames (from ${uncachedContainers.length} containers)`);
   
   // Process unique usernames one at a time to respect rate limits
   for (let i = 0; i < uniqueUsernameList.length; i++) {
@@ -1147,14 +991,8 @@ async function processUsernames() {
     return;
   }
   
-  // Find all tweet/article containers and user cells
   const containers = document.querySelectorAll('article[data-testid="tweet"], [data-testid="UserCell"], [data-testid="User-Names"], [data-testid="User-Name"]');
-  
-  console.log(`Processing ${containers.length} containers for usernames`);
-  
-  if (containers.length === 0) {
-    return;
-  }
+  if (containers.length === 0) return;
   
   // Process visible elements first, then set up observer for off-screen
   await processVisibleUsernames(containers);
@@ -1162,132 +1000,76 @@ async function processUsernames() {
 
 // Setup observers for dynamically loaded content
 function setupObservers() {
-  // MutationObserver for new content
-  if (observer) {
-    observer.disconnect();
-  }
+  // MutationObserver for new content (throttled)
+  if (observer) observer.disconnect();
   
+  let mutationTimeout = null;
   observer = new MutationObserver((mutations) => {
-    // Check if any mutations added nodes (extension enabled check is in processUsernames)
     if (mutations.some(m => m.addedNodes.length > 0)) {
-      if (extensionEnabled) {
-        processUsernamesThrottled();
-      }
-      if (botDetectionEnabled) {
-        // Debounce bot detection processing
-        if (!processBotDetectionForReplies.timeout) {
-          processBotDetectionForReplies.timeout = setTimeout(() => {
-            processBotDetectionForReplies();
-            processBotDetectionForReplies.timeout = null;
-          }, PROCESS_THROTTLE);
-        }
+      // Coalesce rapid mutations into single processing
+      if (!mutationTimeout) {
+        mutationTimeout = setTimeout(() => {
+          mutationTimeout = null;
+          if (extensionEnabled) processUsernamesThrottled();
+          if (botDetectionEnabled) scheduleBotProcessing();
+        }, 200); // 200ms debounce
       }
     }
   });
   
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  observer.observe(document.body, { childList: true, subtree: true });
   
-  // Navigation observer for SPA navigation
+  // Navigation observer for SPA (separate, less frequent)
   let lastUrl = location.href;
-  new MutationObserver(() => {
-    const url = location.href;
-    if (url !== lastUrl) {
-      lastUrl = url;
-      console.log('Page navigation detected, reprocessing');
+  setInterval(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
       setTimeout(() => {
-        if (extensionEnabled) {
-          processUsernamesThrottled();
-        }
-        if (botDetectionEnabled) {
-          processBotDetectionForReplies();
-        }
+        if (extensionEnabled) processUsernamesThrottled();
+        if (botDetectionEnabled) scheduleBotProcessing();
       }, INIT_DELAY);
     }
-  }).observe(document, { subtree: true, childList: true });
+  }, 500); // Check every 500ms instead of every mutation
 }
 
 // Main initialization
 async function init() {
-  console.log('Twitter Location Flag extension initialized');
-  
   await loadEnabledState();
   await loadCache();
   await loadStats();
   await checkStorageUsage();
   
-  if (!extensionEnabled && !botDetectionEnabled) {
-    console.log('All features disabled');
-    return;
-  }
+  if (!extensionEnabled && !botDetectionEnabled) return;
   
   // Inject page script FIRST - other systems depend on it
   injectPageScript();
-  
-  // Give page script a moment to initialize and capture headers
   await new Promise(resolve => setTimeout(resolve, 500));
   
-  // Initialize bot detection (after page script is ready)
+  // Initialize bot detection modules (silent - only log errors)
   if (botDetectionEnabled) {
-    console.log('🤖 Initializing bot detection...');
-    
-    // Check which modules are available
-    console.log('🤖 Available modules:', {
-      BotDetection: !!window.BotDetection,
-      BotUI: !!window.BotUI,
-      BotCache: !!window.BotCache,
-      BotLegitimacy: !!window.BotLegitimacy,
-    });
-    
-    // Inject bot detection UI styles
-    if (window.BotUI?.injectBotStyles) {
-      window.BotUI.injectBotStyles();
-      console.log('🤖 Bot styles injected');
-    } else {
-      console.warn('🤖 BotUI.injectBotStyles not available');
-    }
-    // Load bot verdict cache
-    if (window.BotCache?.loadBotCache) {
-      await window.BotCache.loadBotCache();
-      console.log('🤖 Bot cache loaded');
-    } else {
-      console.warn('🤖 BotCache.loadBotCache not available');
-    }
-    // Load whitelist
-    if (window.BotCache?.loadWhitelist) {
-      await window.BotCache.loadWhitelist();
-      console.log('🤖 Whitelist loaded');
-    }
-    // Initialize legitimacy tracking (needs page script)
-    if (window.BotLegitimacy?.initLegitimacy) {
-      window.BotLegitimacy.initLegitimacy();
-      console.log('🤖 Legitimacy tracking initialized');
-    } else {
-      console.warn('🤖 BotLegitimacy.initLegitimacy not available');
-    }
-  } else {
-    console.log('🤖 Bot detection is disabled');
+    window.BotUI?.injectBotStyles?.();
+    await window.BotCache?.loadBotCache?.();
+    await window.BotCache?.loadWhitelist?.();
+    window.BotLegitimacy?.initLegitimacy?.();
   }
+  
   setupObservers();
   
   setTimeout(() => {
     processUsernamesThrottled();
-    // Also process bot detection
-    if (botDetectionEnabled) {
-      processBotDetectionForReplies();
-    }
+    if (botDetectionEnabled) scheduleBotProcessing();
   }, INIT_DELAY);
   
   setInterval(saveCache, CACHE_PERIODIC_SAVE);
+  
+  // One-time summary log
+  console.log(`X-Tools: location=${extensionEnabled}, bots=${botDetectionEnabled}`);
 }
 
 // ============================================================================
-// Bot Detection Integration
+// Bot Detection Integration (Performance-Optimized)
 // ============================================================================
 
-// Helper: Get bot detection functions from namespaced modules
 const BotModules = {
   get Detection() { return window.BotDetection; },
   get UI() { return window.BotUI; },
@@ -1295,228 +1077,178 @@ const BotModules = {
   get Legitimacy() { return window.BotLegitimacy; },
 };
 
-// Process a reply element for bot detection
-async function processBotDetection(replyElement) {
-  if (!botDetectionEnabled) {
-    console.log('🤖 Bot detection disabled, skipping');
-    return;
-  }
-  if (replyElement.dataset.botProcessed === 'true') return;
-  
-  // Mark as processing
-  replyElement.dataset.botProcessed = 'processing';
-  
-  const username = extractUsername(replyElement);
-  if (!username) {
-    console.log('🤖 No username found in element');
-    replyElement.dataset.botProcessed = 'failed';
-    return;
-  }
-  
-  console.log(`🤖 Processing @${username}`);
-  
-  // Check whitelist first
-  if (BotModules.Cache?.isWhitelisted?.(username)) {
-    console.log(`🤖 @${username} is whitelisted`);
-    replyElement.dataset.botProcessed = 'whitelisted';
-    return;
-  }
-  
-  // Check cache first (instant)
-  if (BotModules.Cache?.getCachedVerdict) {
-    const cached = BotModules.Cache.getCachedVerdict(username);
-    if (cached) {
-      console.log(`🤖 @${username} cached verdict:`, cached.isBot ? 'BOT' : 'HUMAN');
-      if (BotModules.UI?.applyBotUI) {
-        BotModules.UI.applyBotUI(replyElement, cached);
-      } else {
-        console.warn('🤖 BotUI.applyBotUI not available');
+// Debounce/throttle for bot detection
+let botProcessingScheduled = false;
+let botStats = { processed: 0, bots: 0, humans: 0 };
+
+// Request user data from intercepted Twitter API cache
+function requestUserData(username) {
+  return new Promise((resolve) => {
+    const requestId = `userData_${Date.now()}_${Math.random()}`;
+    const handler = (event) => {
+      if (event.data?.type === '__userDataResponse' && event.data.requestId === requestId) {
+        window.removeEventListener('message', handler);
+        resolve(event.data.userData);
       }
-      replyElement.dataset.botProcessed = 'true';
-      return;
-    }
-  } else {
-    console.warn('🤖 BotCache.getCachedVerdict not available');
-  }
-  
-  // Extract reply data for heuristics
-  const replyData = extractReplyData(replyElement, username);
-  if (!replyData) {
-    console.log(`🤖 Failed to extract data for @${username}`);
-    replyElement.dataset.botProcessed = 'failed';
-    return;
-  }
-  
-  // Add location from cache if available
-  if (locationCache.has(username)) {
-    const cached = locationCache.get(username);
-    if (cached.expiry && cached.expiry > Date.now()) {
-      replyData.location = cached.location;
-    }
-  }
-  
-  // Calculate heuristic score
-  let heuristicScore = 0;
-  let action = 'none';
-  
-  if (BotModules.Detection?.calculateBotScore) {
-    // Add legitimacy context
-    if (BotModules.Legitimacy?.getUserContext) {
-      const userContext = await BotModules.Legitimacy.getUserContext(username);
-      replyData.userFollows = userContext.userFollows;
-      replyData.mutualCount = userContext.mutualCount;
-    }
-    
-    const result = BotModules.Detection.calculateBotScore(replyData, botSensitivity);
-    heuristicScore = result.score;
-    replyData.heuristicScore = heuristicScore;
-    
-    if (BotModules.Detection.getActionForScore) {
-      action = BotModules.Detection.getActionForScore(heuristicScore, botSensitivity);
-    }
-    
-    console.log(`🤖 @${username}: score=${heuristicScore}, action=${action}`, result.breakdown);
-  } else {
-    console.warn('🤖 BotDetection.calculateBotScore not available - scripts may not be loaded');
-  }
-  
-  // Action based on heuristic score
-  if (action === 'dim') {
-    // High confidence bot - dim immediately
-    const verdict = {
-      username,
-      isBot: true,
-      confidence: Math.min(0.95, heuristicScore / 100),
-      category: 'crypto_spam',
-      reason: 'High-confidence heuristic detection',
-      source: 'heuristics',
-      expiry: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 days
     };
-    
-    console.log(`🤖 @${username}: DIMMING (bot score=${heuristicScore})`);
-    
-    if (BotModules.Cache?.persistBotCache) {
-      BotModules.Cache.persistBotCache(username, verdict);
-    }
-    
-    if (BotModules.UI?.applyBotUI) {
-      BotModules.UI.applyBotUI(replyElement, verdict);
-    }
-    replyElement.dataset.botProcessed = 'true';
-  } else if (action === 'ai') {
-    // Uncertain - queue for AI classification
-    console.log(`🤖 @${username}: QUEUING for AI (score=${heuristicScore})`);
-    if (BotModules.Cache?.queueForClassification) {
-      BotModules.Cache.queueForClassification(replyData, (verdict) => {
-        if (verdict && BotModules.UI?.applyBotUI) {
-          BotModules.UI.applyBotUI(replyElement, verdict);
-        }
-        replyElement.dataset.botProcessed = 'true';
-      });
-    }
-    replyElement.dataset.botProcessed = 'pending';
-  } else {
-    // Low score - likely human
-    console.log(`🤖 @${username}: HUMAN (score=${heuristicScore})`);
-    replyElement.dataset.botProcessed = 'human';
-  }
+    window.addEventListener('message', handler);
+    window.postMessage({ type: '__getUserData', username, requestId }, '*');
+    // Timeout after 100ms - don't block on missing data
+    setTimeout(() => {
+      window.removeEventListener('message', handler);
+      resolve(null);
+    }, 100);
+  });
 }
 
-// Extract data from a reply element
-function extractReplyData(replyElement, username) {
+// Process a single tweet for bot detection
+async function processBotDetection(el) {
+  if (!botDetectionEnabled || el.dataset.botProcessed) return;
+  el.dataset.botProcessed = 'processing';
+  
+  const username = extractUsername(el);
+  if (!username) { el.dataset.botProcessed = 'skip'; return; }
+  
+  // Whitelist check
+  if (BotModules.Cache?.isWhitelisted?.(username)) {
+    el.dataset.botProcessed = 'whitelisted';
+    return;
+  }
+  
+  // Cache check
+  const cached = BotModules.Cache?.getCachedVerdict?.(username);
+  if (cached) {
+    if (cached.isBot) BotModules.UI?.applyBotUI?.(el, cached);
+    el.dataset.botProcessed = 'cached';
+    return;
+  }
+  
+  // Extract data from DOM + intercepted Twitter API
+  const replyData = await extractReplyData(el, username);
+  if (!replyData) { el.dataset.botProcessed = 'skip'; return; }
+  
+  // Add legitimacy context (async but fast - uses local cache)
+  if (BotModules.Legitimacy?.getUserContext) {
+    const ctx = await BotModules.Legitimacy.getUserContext(username);
+    replyData.userFollows = ctx.userFollows;
+    replyData.mutualCount = ctx.mutualCount;
+  }
+  
+  // Calculate score
+  if (!BotModules.Detection?.calculateBotScore) {
+    el.dataset.botProcessed = 'skip';
+    return;
+  }
+  
+  const result = BotModules.Detection.calculateBotScore(replyData);
+  const score = result.score;
+  const action = BotModules.Detection.getActionForScore?.(score) || 'none';
+  
+  if (action === 'dim') {
+    // High confidence bot
+    const verdict = {
+      username, isBot: true,
+      confidence: Math.min(0.95, score / 100),
+      category: 'crypto_spam',
+      reason: 'Heuristic detection',
+      source: 'heuristics',
+      expiry: Date.now() + 7 * 24 * 60 * 60 * 1000
+    };
+    BotModules.Cache?.persistBotCache?.(username, verdict);
+    BotModules.UI?.applyBotUI?.(el, verdict);
+    botStats.bots++;
+    el.dataset.botProcessed = 'bot';
+  } else if (action === 'ai') {
+    // Queue for AI
+    BotModules.Cache?.queueForClassification?.(replyData, (verdict) => {
+      if (verdict?.isBot) {
+        BotModules.UI?.applyBotUI?.(el, verdict);
+        botStats.bots++;
+      } else {
+        botStats.humans++;
+      }
+      el.dataset.botProcessed = verdict?.isBot ? 'bot' : 'human';
+    });
+    el.dataset.botProcessed = 'pending';
+  } else {
+    botStats.humans++;
+    el.dataset.botProcessed = 'human';
+  }
+  
+  botStats.processed++;
+}
+
+// Extract data from tweet element + Twitter API cache
+async function extractReplyData(el, username) {
   try {
-    const displayNameEl = replyElement.querySelector('[data-testid="User-Name"] a, [data-testid="UserName"] a');
+    const displayNameEl = el.querySelector('[data-testid="User-Name"] a');
     const displayName = displayNameEl?.textContent?.trim() || username;
-    
-    const replyTextEl = replyElement.querySelector('[data-testid="tweetText"]');
-    const replyText = replyTextEl?.textContent?.trim() || '';
-    
-    // Get time element for timing analysis
-    const timeEl = replyElement.querySelector('time');
-    const replyTime = timeEl?.getAttribute('datetime');
-    
-    // Check for default avatar
-    const avatarEl = replyElement.querySelector('img[src*="profile_images"]');
+    const replyText = el.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+    const avatarEl = el.querySelector('img[src*="profile_images"]');
     const hasCustomAvatar = avatarEl && !avatarEl.src.includes('default_profile');
+    const isVerified = !!el.querySelector('[data-testid="icon-verified"], svg[aria-label*="Verified"]');
     
-    // Check for verified badge
-    const verifiedEl = replyElement.querySelector('[data-testid="icon-verified"], svg[aria-label*="Verified"]');
-    const isVerified = !!verifiedEl;
+    // Try to get real data from intercepted Twitter API
+    const twitterData = await requestUserData(username);
     
+    // Use real data if available, otherwise use what we can extract from DOM
     return {
       username,
-      displayName,
+      displayName: twitterData?.displayName || displayName,
       replyText,
-      originalTweetText: '', // Would need to traverse up to find this
-      bio: '', // Not available in reply context
-      followers: 0, // Would need API call
-      following: 0,
-      accountCreatedAt: '',
-      hasCustomAvatar,
-      isVerified,
-      location: null,
-      secondsAfterOriginal: 0,
-      heuristicScore: 0,
+      bio: twitterData?.bio || '',
+      followers: twitterData?.followers || 0,
+      following: twitterData?.following || 0,
+      createdAt: twitterData?.createdAt || '',
+      hasCustomAvatar: twitterData?.hasCustomAvatar ?? hasCustomAvatar,
+      isVerified: twitterData?.verified || isVerified,
+      location: twitterData?.location || locationCache.get(username)?.location || null,
+      // Mark if we have real data (affects scoring - unknown = skip that signal)
+      hasTwitterData: !!twitterData,
       userFollows: false,
       mutualCount: 0
     };
-  } catch (error) {
-    console.error('Error extracting reply data:', error);
+  } catch (e) {
     return null;
   }
 }
 
-// Process bot detection for visible replies
-async function processBotDetectionForReplies() {
-  if (!botDetectionEnabled) {
-    console.log('🤖 processBotDetectionForReplies: disabled');
-    return;
+// Batch process visible tweets (throttled)
+function scheduleBotProcessing() {
+  if (botProcessingScheduled || !botDetectionEnabled) return;
+  botProcessingScheduled = true;
+  
+  requestAnimationFrame(() => {
+    botProcessingScheduled = false;
+    processBotDetectionBatch();
+  });
+}
+
+async function processBotDetectionBatch() {
+  const tweets = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
+  if (tweets.length === 0) return;
+  
+  // Only process visible tweets
+  const visible = Array.from(tweets).filter(el => {
+    const rect = el.getBoundingClientRect();
+    return rect.top < window.innerHeight + 200 && rect.bottom > -200;
+  });
+  
+  // Process in small batches to avoid blocking
+  const batch = visible.slice(0, 5);
+  for (const el of batch) {
+    await processBotDetection(el);
   }
   
-  // Find reply elements (articles that are replies, not the main tweet)
-  const replies = document.querySelectorAll('article[data-testid="tweet"]');
-  console.log(`🤖 Found ${replies.length} tweet elements`);
-  
-  let processed = 0;
-  let skipped = 0;
-  
-  for (const reply of replies) {
-    // Skip if already processed
-    if (reply.dataset.botProcessed && reply.dataset.botProcessed !== 'failed') {
-      skipped++;
-      continue;
-    }
-    
-    // Check visibility
-    const rect = reply.getBoundingClientRect();
-    const isVisible = rect.top < window.innerHeight && rect.bottom > 0;
-    
-    if (isVisible) {
-      await processBotDetection(reply);
-      processed++;
-    }
-  }
-  
-  if (processed > 0 || replies.length > 0) {
-    console.log(`🤖 Processed ${processed} tweets, skipped ${skipped} already-processed`);
+  // If more to process, schedule next batch
+  if (visible.length > 5) {
+    setTimeout(scheduleBotProcessing, 50);
   }
 }
 
-// Inject bot detection scripts
-function injectBotDetectionScripts() {
-  const scripts = ['botDetection.js', 'botLegitimacy.js', 'botCache.js', 'botUI.js'];
-  
-  scripts.forEach(scriptName => {
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL(scriptName);
-    script.onload = function() {
-      console.log(`Loaded ${scriptName}`);
-    };
-    script.onerror = function() {
-      console.error(`Failed to load ${scriptName}`);
-    };
-    (document.head || document.documentElement).appendChild(script);
-  });
+// Legacy function name for compatibility
+function processBotDetectionForReplies() {
+  scheduleBotProcessing();
 }
 
 // Wait for page to load

@@ -1,416 +1,334 @@
-// This script runs in the page context to access cookies and make API calls
+// Page script - intercepts Twitter API responses and handles authenticated requests
 (function() {
-  // Store headers from Twitter's own API calls
+  'use strict';
+  
+  // ============================================================================
+  // State
+  // ============================================================================
+  
   let twitterHeaders = null;
   let headersReady = false;
   
-  // Function to capture headers from a request
-  function captureHeaders(headers) {
-    if (!headers) return;
-    
-    const headerObj = {};
-    if (headers instanceof Headers) {
-      headers.forEach((value, key) => {
-        headerObj[key] = value;
-      });
-    } else if (headers instanceof Object) {
-      // Copy all headers
-      for (const [key, value] of Object.entries(headers)) {
-        headerObj[key] = value;
-      }
-    }
-    
-    // Replace headers completely (don't merge) to ensure we get auth tokens
-    twitterHeaders = headerObj;
-    headersReady = true;
-    console.log('Captured Twitter API headers:', Object.keys(headerObj));
-  }
+  // Cache of user data intercepted from Twitter's own API calls
+  const userDataCache = new Map();
   
-  // Intercept fetch to capture Twitter's headers
+  // ============================================================================
+  // Intercept Twitter API responses to extract user data
+  // ============================================================================
+  
   const originalFetch = window.fetch;
-  window.fetch = function(...args) {
-    const url = args[0];
+  window.fetch = async function(...args) {
+    const url = String(args[0] || '');
     const options = args[1] || {};
     
-    // If it's a Twitter GraphQL API call, capture ALL headers
-    if (typeof url === 'string' && url.includes('x.com/i/api/graphql')) {
-      if (options.headers) {
-        captureHeaders(options.headers);
-        console.log('Captured Twitter headers:', Object.keys(twitterHeaders || {}));
+    // Capture headers from Twitter's GraphQL calls (for our own requests later)
+    if (url.includes('x.com/i/api/graphql') && options.headers && !headersReady) {
+      captureHeaders(options.headers);
+    }
+    
+    // Call original fetch
+    const response = await originalFetch.apply(this, args);
+    
+    // Intercept responses that contain user data
+    if (url.includes('x.com/i/api/graphql')) {
+      try {
+        // Clone response so we can read it without consuming
+        const cloned = response.clone();
+        const data = await cloned.json().catch(() => null);
+        if (data) {
+          extractUsersFromResponse(data);
+        }
+      } catch (e) {
+        // Silently fail - don't break Twitter
       }
     }
     
-    return originalFetch.apply(this, args);
+    return response;
   };
   
-  // Also intercept XMLHttpRequest
-  const originalXHROpen = XMLHttpRequest.prototype.open;
-  const originalXHRSend = XMLHttpRequest.prototype.send;
-  
-  XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-    this._url = url;
-    return originalXHROpen.apply(this, [method, url, ...rest]);
-  };
-  
-  XMLHttpRequest.prototype.send = function(...args) {
-    if (this._url && this._url.includes('x.com/i/api/graphql')) {
-      const headers = {};
-      // Try to get headers from setRequestHeader
-      if (this._headers) {
-        Object.assign(headers, this._headers);
-      }
-      captureHeaders(headers);
+  function captureHeaders(headers) {
+    const headerObj = {};
+    if (headers instanceof Headers) {
+      headers.forEach((v, k) => { headerObj[k] = v; });
+    } else if (typeof headers === 'object') {
+      Object.assign(headerObj, headers);
     }
-    return originalXHRSend.apply(this, args);
-  };
+    if (Object.keys(headerObj).length > 0) {
+      twitterHeaders = headerObj;
+      headersReady = true;
+    }
+  }
   
-  const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-  XMLHttpRequest.prototype.setRequestHeader = function(header, value) {
-    if (!this._headers) this._headers = {};
-    this._headers[header] = value;
-    return originalSetRequestHeader.apply(this, [header, value]);
-  };
+  // Recursively extract user objects from Twitter API responses
+  function extractUsersFromResponse(obj, depth = 0) {
+    if (!obj || typeof obj !== 'object' || depth > 15) return;
+    
+    // Check if this is a user object (has legacy.screen_name)
+    if (obj.legacy?.screen_name && obj.rest_id) {
+      const legacy = obj.legacy;
+      const username = String(legacy.screen_name || '').toLowerCase();
+      if (username) {
+        userDataCache.set(username, {
+          id: obj.rest_id,
+          username: legacy.screen_name,
+          displayName: legacy.name || '',
+          followers: legacy.followers_count || 0,
+          following: legacy.friends_count || 0,
+          tweets: legacy.statuses_count || 0,
+          createdAt: legacy.created_at || null,
+          verified: legacy.verified || obj.is_blue_verified || false,
+          protected: legacy.protected || false,
+          bio: legacy.description || '',
+          location: legacy.location || '',
+          hasCustomAvatar: !String(legacy.profile_image_url_https || '').includes('default_profile'),
+          fetchedAt: Date.now()
+        });
+      }
+    }
+    
+    // Recurse into arrays and objects
+    if (Array.isArray(obj)) {
+      for (const item of obj) {
+        extractUsersFromResponse(item, depth + 1);
+      }
+    } else {
+      for (const key of Object.keys(obj)) {
+        extractUsersFromResponse(obj[key], depth + 1);
+      }
+    }
+  }
   
-  // Wait a bit for Twitter to make some API calls first
+  // ============================================================================
+  // Message handlers for content script
+  // ============================================================================
+  
+  window.addEventListener('message', async function(event) {
+    if (!event.data?.type) return;
+    
+    // Get cached user data
+    if (event.data.type === '__getUserData') {
+      const { username, requestId } = event.data;
+      const cached = userDataCache.get(String(username || '').toLowerCase());
+      window.postMessage({
+        type: '__userDataResponse',
+        username,
+        userData: cached || null,
+        requestId
+      }, '*');
+      return;
+    }
+    
+    // Get multiple users' data
+    if (event.data.type === '__getBulkUserData') {
+      const { usernames, requestId } = event.data;
+      const results = {};
+      for (const u of (usernames || [])) {
+        const cached = userDataCache.get(String(u || '').toLowerCase());
+        if (cached) results[u.toLowerCase()] = cached;
+      }
+      window.postMessage({
+        type: '__bulkUserDataResponse',
+        userData: results,
+        requestId
+      }, '*');
+      return;
+    }
+    
+    // Fetch location (AboutAccountQuery)
+    if (event.data.type === '__fetchLocation') {
+      const { screenName, requestId } = event.data;
+      await handleLocationRequest(screenName, requestId);
+      return;
+    }
+    
+    // Fetch following list
+    if (event.data.type === '__fetchFollowing') {
+      const { requestId } = event.data;
+      await handleFollowingRequest(requestId);
+      return;
+    }
+  });
+  
+  // ============================================================================
+  // Location request handler
+  // ============================================================================
+  
+  async function handleLocationRequest(screenName, requestId) {
+    // Wait for headers (max 2s)
+    if (!headersReady) {
+      for (let i = 0; i < 20 && !headersReady; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+    
+    try {
+      const variables = JSON.stringify({ screenName });
+      const url = `https://x.com/i/api/graphql/XRqGa7EeokUU5kppkh13EA/AboutAccountQuery?variables=${encodeURIComponent(variables)}`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: twitterHeaders || { 'Accept': 'application/json' },
+        referrer: window.location.href
+      });
+      
+      let location = null;
+      let isRateLimited = response.status === 429;
+      
+      if (response.ok) {
+        const data = await response.json();
+        location = data?.data?.user_result_by_screen_name?.result?.about_profile?.account_based_in || null;
+      }
+      
+      window.postMessage({
+        type: '__locationResponse',
+        screenName,
+        location,
+        requestId,
+        isRateLimited
+      }, '*');
+    } catch (error) {
+      window.postMessage({
+        type: '__locationResponse',
+        screenName,
+        location: null,
+        requestId
+      }, '*');
+    }
+  }
+  
+  // ============================================================================
+  // Following list handler
+  // ============================================================================
+  
+  async function handleFollowingRequest(requestId) {
+    // Wait for headers
+    if (!headersReady) {
+      for (let i = 0; i < 20 && !headersReady; i++) {
+        await new Promise(r => setTimeout(r, 100));
+      }
+    }
+    
+    try {
+      // Get current username from DOM
+      const currentUser = getCurrentUsername();
+      if (!currentUser) {
+        throw new Error('Could not determine current user');
+      }
+      
+      // First get user ID
+      const userId = await getUserId(currentUser);
+      if (!userId) {
+        throw new Error('Could not get user ID');
+      }
+      
+      // Fetch following (just first page for now - avoid rate limits)
+      const following = await fetchFollowingPage(userId);
+      
+      window.postMessage({
+        type: '__followingResponse',
+        following,
+        requestId
+      }, '*');
+    } catch (error) {
+      window.postMessage({
+        type: '__followingResponse',
+        following: [],
+        error: error.message,
+        requestId
+      }, '*');
+    }
+  }
+  
+  function getCurrentUsername() {
+    // Try account switcher first (most reliable)
+    const switcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+    if (switcher) {
+      const text = switcher.textContent || '';
+      const match = text.match(/@([a-zA-Z0-9_]+)/);
+      if (match) return match[1];
+    }
+    
+    // Try profile link
+    const profileLink = document.querySelector('[data-testid="AppTabBar_Profile_Link"]');
+    if (profileLink) {
+      const href = profileLink.getAttribute('href');
+      if (href) return href.replace('/', '');
+    }
+    
+    return null;
+  }
+  
+  async function getUserId(screenName) {
+    const features = {
+      hidden_profile_subscriptions_enabled: true,
+      responsive_web_graphql_exclude_directive_enabled: true,
+      verified_phone_label_enabled: false,
+      responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+      responsive_web_graphql_timeline_navigation_enabled: true
+    };
+    
+    const url = `https://x.com/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify({ screen_name: screenName }))}&features=${encodeURIComponent(JSON.stringify(features))}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: twitterHeaders || { 'Accept': 'application/json' },
+      referrer: window.location.href
+    });
+    
+    if (!response.ok) return null;
+    
+    const data = await response.json();
+    return data?.data?.user?.result?.rest_id || null;
+  }
+  
+  async function fetchFollowingPage(userId, cursor = null) {
+    const variables = { userId, count: 200, includePromotedContent: false };
+    if (cursor) variables.cursor = cursor;
+    
+    const features = {
+      responsive_web_graphql_exclude_directive_enabled: true,
+      verified_phone_label_enabled: false,
+      responsive_web_graphql_timeline_navigation_enabled: true,
+      responsive_web_graphql_skip_user_profile_image_extensions_enabled: false
+    };
+    
+    const url = `https://x.com/i/api/graphql/iSicc7LrzWGBgDPL0tM_TQ/Following?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(features))}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: twitterHeaders || { 'Accept': 'application/json' },
+      referrer: window.location.href
+    });
+    
+    if (!response.ok) return [];
+    
+    const data = await response.json();
+    const following = [];
+    
+    const instructions = data?.data?.user?.result?.timeline?.timeline?.instructions || [];
+    for (const instruction of instructions) {
+      for (const entry of (instruction.entries || [])) {
+        const user = entry.content?.itemContent?.user_results?.result;
+        if (user?.legacy?.screen_name) {
+          following.push(user.legacy.screen_name.toLowerCase());
+        }
+      }
+    }
+    
+    return following;
+  }
+  
+  // Auto-ready headers after 3s if none captured
   setTimeout(() => {
     if (!headersReady) {
-      console.log('No Twitter headers captured yet, using defaults');
-      twitterHeaders = {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      };
+      twitterHeaders = { 'Accept': 'application/json', 'Content-Type': 'application/json' };
       headersReady = true;
     }
   }, 3000);
   
-  // Helper: Get current user's screen name from page
-  function getCurrentUsername() {
-    // Try to get from page URL patterns or DOM
-    const navLinks = document.querySelectorAll('nav a[href^="/"]');
-    for (const link of navLinks) {
-      const href = link.getAttribute('href');
-      // Profile link is typically just /username
-      if (href && href.match(/^\/[a-zA-Z0-9_]+$/) && !['home', 'explore', 'notifications', 'messages', 'i', 'compose', 'search', 'settings'].includes(href.slice(1))) {
-        // Check if this is the profile link (usually has avatar or specific data-testid)
-        if (link.querySelector('img') || link.closest('[data-testid="AppTabBar_Profile_Link"]')) {
-          return href.slice(1);
-        }
-      }
-    }
-    // Fallback: try to find in account switcher or similar
-    const accountSwitcher = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
-    if (accountSwitcher) {
-      const usernameSpan = accountSwitcher.querySelector('span');
-      if (usernameSpan) {
-        const match = usernameSpan.textContent?.match(/@([a-zA-Z0-9_]+)/);
-        if (match) return match[1];
-      }
-    }
-    return null;
-  }
-  
-  // Fetch user's following list with pagination
-  async function fetchFollowingList() {
-    const currentUser = getCurrentUsername();
-    if (!currentUser) {
-      throw new Error('Could not determine current user');
-    }
-    
-    console.log(`Fetching following list for @${currentUser}...`);
-    
-    const following = [];
-    let cursor = null;
-    let pageCount = 0;
-    const maxPages = 50; // Safety limit: 50 pages * 200 = 10,000 max following
-    
-    // Use captured headers
-    const headers = twitterHeaders || {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    };
-    
-    while (pageCount < maxPages) {
-      const variables = {
-        userId: null, // Will be set from first call
-        count: 200,
-        includePromotedContent: false
-      };
-      
-      if (cursor) {
-        variables.cursor = cursor;
-      }
-      
-      // First, we need to get the user ID
-      if (!variables.userId) {
-        // Get user ID from UserByScreenName query - requires features param
-        const userByScreenNameFeatures = {
-          hidden_profile_subscriptions_enabled: true,
-          rweb_tipjar_consumption_enabled: true,
-          responsive_web_graphql_exclude_directive_enabled: true,
-          verified_phone_label_enabled: false,
-          subscriptions_verification_info_is_identity_verified_enabled: true,
-          subscriptions_verification_info_verified_since_enabled: true,
-          highlights_tweets_tab_ui_enabled: true,
-          responsive_web_twitter_article_notes_tab_enabled: true,
-          subscriptions_feature_can_gift_premium: true,
-          creator_subscriptions_tweet_preview_api_enabled: true,
-          responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
-          responsive_web_graphql_timeline_navigation_enabled: true
-        };
-        const userIdUrl = `https://x.com/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify({ screen_name: currentUser }))}&features=${encodeURIComponent(JSON.stringify(userByScreenNameFeatures))}`;
-        try {
-          const userIdResponse = await fetch(userIdUrl, {
-            method: 'GET',
-            credentials: 'include',
-            headers: headers,
-            referrer: window.location.href
-          });
-          
-          if (userIdResponse.ok) {
-            const userData = await userIdResponse.json();
-            variables.userId = userData?.data?.user?.result?.rest_id;
-            if (!variables.userId) {
-              throw new Error('Could not get user ID');
-            }
-          } else if (userIdResponse.status === 429) {
-            console.warn('Rate limited when fetching user ID');
-            break;
-          } else {
-            const errorText = await userIdResponse.text().catch(() => '');
-            console.error(`UserByScreenName error: ${userIdResponse.status}`, errorText.substring(0, 300));
-            throw new Error(`Failed to get user ID: ${userIdResponse.status}`);
-          }
-        } catch (error) {
-          console.error('Error getting user ID:', error);
-          throw error;
-        }
-      }
-      
-      // Now fetch following
-      const features = {
-        rweb_tipjar_consumption_enabled: true,
-        responsive_web_graphql_exclude_directive_enabled: true,
-        verified_phone_label_enabled: false,
-        creator_subscriptions_tweet_preview_api_enabled: true,
-        responsive_web_graphql_timeline_navigation_enabled: true,
-        responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
-        communities_web_enable_tweet_community_results_fetch: true,
-        c9s_tweet_anatomy_moderator_badge_enabled: true,
-        articles_preview_enabled: true,
-        responsive_web_edit_tweet_api_enabled: true,
-        graphql_is_translatable_rweb_tweet_is_translatable_enabled: true,
-        view_counts_everywhere_api_enabled: true,
-        longform_notetweets_consumption_enabled: true,
-        responsive_web_twitter_article_tweet_consumption_enabled: true,
-        tweet_awards_web_tipping_enabled: false,
-        creator_subscriptions_quote_tweet_preview_enabled: false,
-        freedom_of_speech_not_reach_fetch_enabled: true,
-        standardized_nudges_misinfo: true,
-        tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true,
-        rweb_video_timestamps_enabled: true,
-        longform_notetweets_rich_text_read_enabled: true,
-        longform_notetweets_inline_media_enabled: true,
-        responsive_web_enhance_cards_enabled: false
-      };
-      
-      const followingUrl = `https://x.com/i/api/graphql/iSicc7LrzWGBgDPL0tM_TQ/Following?variables=${encodeURIComponent(JSON.stringify(variables))}&features=${encodeURIComponent(JSON.stringify(features))}`;
-      
-      try {
-        const response = await fetch(followingUrl, {
-          method: 'GET',
-          credentials: 'include',
-          headers: headers,
-          referrer: window.location.href
-        });
-        
-        if (response.status === 429) {
-          console.warn('Rate limited when fetching following list');
-          break;
-        }
-        
-        if (!response.ok) {
-          console.error(`Following API error: ${response.status}`);
-          break;
-        }
-        
-        const data = await response.json();
-        const timeline = data?.data?.user?.result?.timeline?.timeline;
-        
-        if (!timeline?.instructions) {
-          console.log('No more following entries');
-          break;
-        }
-        
-        // Extract usernames from instructions
-        let foundEntries = false;
-        for (const instruction of timeline.instructions) {
-          const entries = instruction.entries || [];
-          for (const entry of entries) {
-            if (entry.content?.itemContent?.user_results?.result) {
-              const user = entry.content.itemContent.user_results.result;
-              const screenName = user.legacy?.screen_name;
-              if (screenName) {
-                following.push(screenName.toLowerCase());
-                foundEntries = true;
-              }
-            }
-            // Check for cursor
-            if (entry.content?.cursorType === 'Bottom') {
-              cursor = entry.content.value;
-            }
-          }
-        }
-        
-        if (!foundEntries) {
-          console.log('No more following entries found');
-          break;
-        }
-        
-        pageCount++;
-        console.log(`Fetched page ${pageCount}, total following: ${following.length}`);
-        
-        // Small delay between pages to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-      } catch (error) {
-        console.error('Error fetching following page:', error);
-        break;
-      }
-    }
-    
-    console.log(`Finished fetching following list: ${following.length} accounts`);
-    return following;
-  }
-  
-  // Listen for fetch requests from content script via postMessage
-  window.addEventListener('message', async function(event) {
-    // Handle following list request
-    if (event.data && event.data.type === '__fetchFollowing') {
-      const { requestId } = event.data;
-      
-      // Wait for headers to be ready
-      if (!headersReady) {
-        let waitCount = 0;
-        while (!headersReady && waitCount < 30) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          waitCount++;
-        }
-      }
-      
-      try {
-        const following = await fetchFollowingList();
-        window.postMessage({
-          type: '__followingResponse',
-          following,
-          requestId
-        }, '*');
-      } catch (error) {
-        console.error('Error fetching following list:', error);
-        window.postMessage({
-          type: '__followingResponse',
-          following: [],
-          error: error.message,
-          requestId
-        }, '*');
-      }
-      return;
-    }
-    
-    // Only accept messages from our extension
-    if (event.data && event.data.type === '__fetchLocation') {
-      const { screenName, requestId } = event.data;
-      
-      // Wait for headers to be ready
-      if (!headersReady) {
-        let waitCount = 0;
-        while (!headersReady && waitCount < 30) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          waitCount++;
-        }
-      }
-      
-      try {
-        const variables = JSON.stringify({ screenName });
-        const url = `https://x.com/i/api/graphql/XRqGa7EeokUU5kppkh13EA/AboutAccountQuery?variables=${encodeURIComponent(variables)}`;
-        
-        // Use captured headers or minimal defaults
-        const headers = twitterHeaders || {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        };
-        
-        // Ensure credentials are included
-        const response = await fetch(url, {
-          method: 'GET',
-          credentials: 'include',
-          headers: headers,
-          referrer: window.location.href,
-          referrerPolicy: 'origin-when-cross-origin'
-        });
-        
-        let location = null;
-        if (response.ok) {
-          const data = await response.json();
-          console.log(`API response for ${screenName}:`, data);
-          location = data?.data?.user_result_by_screen_name?.result?.about_profile?.account_based_in || null;
-          console.log(`Extracted location for ${screenName}:`, location);
-          
-          // Debug: log the full path to see what's available
-          if (!location && data?.data?.user_result_by_screen_name?.result) {
-            console.log('User result available but no location:', {
-              hasAboutProfile: !!data.data.user_result_by_screen_name.result.about_profile,
-              aboutProfile: data.data.user_result_by_screen_name.result.about_profile
-            });
-          }
-        } else {
-          const errorText = await response.text().catch(() => '');
-          
-          // Handle rate limiting
-          if (response.status === 429) {
-            const resetTime = response.headers.get('x-rate-limit-reset');
-            const remaining = response.headers.get('x-rate-limit-remaining');
-            const limit = response.headers.get('x-rate-limit-limit');
-            
-            if (resetTime) {
-              const resetDate = new Date(parseInt(resetTime) * 1000);
-              const now = Date.now();
-              const waitTime = resetDate.getTime() - now;
-              
-              console.log(`Rate limited! Limit: ${limit}, Remaining: ${remaining}`);
-              console.log(`Rate limit resets at: ${resetDate.toLocaleString()}`);
-              console.log(`Waiting ${Math.ceil(waitTime / 1000 / 60)} minutes before retrying...`);
-              
-              // Store rate limit info for content script
-              window.postMessage({
-                type: '__rateLimitInfo',
-                resetTime: parseInt(resetTime),
-                waitTime: Math.max(0, waitTime)
-              }, '*');
-            }
-          } else {
-            console.log(`Twitter API error for ${screenName}:`, response.status, response.statusText, errorText.substring(0, 200));
-          }
-        }
-        
-        // Send response back to content script via postMessage
-        // Include error status so content script knows not to cache on rate limit
-        window.postMessage({
-          type: '__locationResponse',
-          screenName,
-          location,
-          requestId,
-          isRateLimited: response.status === 429
-        }, '*');
-      } catch (error) {
-        console.error('Error fetching location:', error);
-        window.postMessage({
-          type: '__locationResponse',
-          screenName,
-          location: null,
-          requestId
-        }, '*');
-      }
-    }
-  });
+  // Expose cache size for debugging (no verbose logging)
+  window.__botDetectionCacheSize = () => userDataCache.size;
 })();
-

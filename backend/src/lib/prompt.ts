@@ -10,32 +10,42 @@ function getFollowerRatioAssessment(followers: number, following: number): strin
 	return "neutral";
 }
 
-function getAccountAgeYears(createdAt: string): number {
+function getAccountAgeYears(createdAt: string): number | null {
+	if (!createdAt) return null;
 	const created = new Date(createdAt).getTime();
+	if (Number.isNaN(created)) return null;
 	const now = Date.now();
 	return (now - created) / (365 * 24 * 60 * 60 * 1000);
 }
 
 export function buildClassificationPrompt(reply: ReplyData): string {
 	const ageYears = getAccountAgeYears(reply.accountCreatedAt);
-	const followerRatio = reply.following > 0 ? (reply.followers / reply.following).toFixed(1) : "N/A";
-	const ratioAssessment = getFollowerRatioAssessment(reply.followers, reply.following);
+	const followerRatio = reply.following > 0 ? (reply.followers / reply.following).toFixed(1) : "unknown";
+	const ratioAssessment =
+		reply.followers > 0 || reply.following > 0
+			? getFollowerRatioAssessment(reply.followers, reply.following)
+			: "unknown (no data)";
+
+	// Format account age - show "unknown" if not available
+	const ageDisplay = ageYears !== null ? `${ageYears.toFixed(1)} years old` : "unknown";
 
 	return `You are analyzing Twitter/X replies for bot/spam detection, with special focus on crypto Twitter spam.
 
 CONTEXT:
 - Original tweet: ${reply.originalTweetText || "[not provided]"}
-- Reply text: ${reply.replyText}
+- Reply text: ${reply.replyText || "[lookup mode - no reply text]"}
 - Account: @${reply.username}
 - Display name: ${reply.displayName}
-- Account created: ${reply.accountCreatedAt} (${ageYears.toFixed(1)} years old)
-- Followers: ${reply.followers} / Following: ${reply.following} (ratio: ${followerRatio}x)
-- Bio: ${reply.bio || "[no bio]"}
-- Reply timing: ${reply.secondsAfterOriginal}s after original
-- Profile picture: ${reply.hasCustomAvatar ? "custom" : "default"}
+- Account created: ${reply.accountCreatedAt || "unknown"} (${ageDisplay})
+- Followers: ${reply.followers || "unknown"} / Following: ${reply.following || "unknown"} (ratio: ${followerRatio}x)
+- Bio: ${reply.bio || "[no bio provided]"}
+- Reply timing: ${reply.secondsAfterOriginal > 0 ? `${reply.secondsAfterOriginal}s after original` : "unknown"}
+- Profile picture: ${reply.hasCustomAvatar ? "custom" : "unknown/default"}
 - Verified: ${reply.isVerified}
 - Location: ${reply.location || "[not set]"}
-- Heuristic score: ${reply.heuristicScore}/100 (higher = more suspicious)
+- Heuristic score: ${reply.heuristicScore}/100 (higher = more suspicious, 0 = no heuristic data)
+
+NOTE: "unknown" values mean we don't have that data - treat as NEUTRAL, not suspicious.
 
 LEGITIMACY CONTEXT:
 - User follows this account: ${reply.userFollows}
@@ -134,7 +144,7 @@ export function buildBatchPrompt(replies: ReplyData[]): string {
 - Reply text: ${reply.replyText}
 - Account: @${reply.username}
 - Display name: ${reply.displayName}
-- Account created: ${reply.accountCreatedAt} (${ageYears.toFixed(1)} years old)
+- Account created: ${reply.accountCreatedAt} (${ageYears || ""}.toFixed(1)} years old)
 - Followers: ${reply.followers} / Following: ${reply.following} (ratio: ${followerRatio}x)
 - Bio: ${reply.bio || "[no bio]"}
 - Reply timing: ${reply.secondsAfterOriginal}s after original
