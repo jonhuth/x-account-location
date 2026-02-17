@@ -142,8 +142,22 @@
       
       // First, we need to get the user ID
       if (!variables.userId) {
-        // Get user ID from UserByScreenName query
-        const userIdUrl = `https://x.com/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify({ screen_name: currentUser }))}`;
+        // Get user ID from UserByScreenName query - requires features param
+        const userByScreenNameFeatures = {
+          hidden_profile_subscriptions_enabled: true,
+          rweb_tipjar_consumption_enabled: true,
+          responsive_web_graphql_exclude_directive_enabled: true,
+          verified_phone_label_enabled: false,
+          subscriptions_verification_info_is_identity_verified_enabled: true,
+          subscriptions_verification_info_verified_since_enabled: true,
+          highlights_tweets_tab_ui_enabled: true,
+          responsive_web_twitter_article_notes_tab_enabled: true,
+          subscriptions_feature_can_gift_premium: true,
+          creator_subscriptions_tweet_preview_api_enabled: true,
+          responsive_web_graphql_skip_user_profile_image_extensions_enabled: false,
+          responsive_web_graphql_timeline_navigation_enabled: true
+        };
+        const userIdUrl = `https://x.com/i/api/graphql/xmU6X_CKVnQ5lSrCbAmJsg/UserByScreenName?variables=${encodeURIComponent(JSON.stringify({ screen_name: currentUser }))}&features=${encodeURIComponent(JSON.stringify(userByScreenNameFeatures))}`;
         try {
           const userIdResponse = await fetch(userIdUrl, {
             method: 'GET',
@@ -162,6 +176,8 @@
             console.warn('Rate limited when fetching user ID');
             break;
           } else {
+            const errorText = await userIdResponse.text().catch(() => '');
+            console.error(`UserByScreenName error: ${userIdResponse.status}`, errorText.substring(0, 300));
             throw new Error(`Failed to get user ID: ${userIdResponse.status}`);
           }
         } catch (error) {
