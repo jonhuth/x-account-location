@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { BotVerdict, ReplyData, SpamCategory } from "../types.js";
-import { buildBatchPrompt, buildClassificationPrompt } from "./prompt.js";
+import { SYSTEM_PROMPT, buildSingleUserMessage, buildUserMessage } from "./prompt.js";
 
 const anthropic = new Anthropic();
 
@@ -14,7 +14,6 @@ interface AIResponse {
 
 function parseAIResponse(text: string): AIResponse | null {
 	try {
-		// Remove any markdown code blocks if present
 		const cleaned = text
 			.replace(/```json\n?/g, "")
 			.replace(/```\n?/g, "")
@@ -22,13 +21,13 @@ function parseAIResponse(text: string): AIResponse | null {
 		const parsed = JSON.parse(cleaned);
 		return {
 			is_bot: Boolean(parsed.is_bot),
-			confidence: Number(parsed.confidence) || 0.5,
-			category: parsed.category || "crypto_spam",
+			confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
+			category: validateCategory(parsed.category),
 			reason: String(parsed.reason || "Unknown"),
-			signals: Array.isArray(parsed.signals) ? parsed.signals : [],
+			signals: Array.isArray(parsed.signals) ? parsed.signals.slice(0, 5) : [],
 		};
 	} catch {
-		console.error("Failed to parse AI response:", text);
+		console.error("Failed to parse AI response:", text.substring(0, 200));
 		return null;
 	}
 }
@@ -42,31 +41,57 @@ function parseBatchAIResponse(text: string, expectedCount: number): AIResponse[]
 		const parsed = JSON.parse(cleaned);
 
 		if (!Array.isArray(parsed)) {
+			// Try to wrap single object response
+			if (expectedCount === 1 && typeof parsed === "object") {
+				return [
+					{
+						is_bot: Boolean(parsed.is_bot),
+						confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
+						category: validateCategory(parsed.category),
+						reason: String(parsed.reason || "Unknown"),
+						signals: Array.isArray(parsed.signals) ? parsed.signals.slice(0, 5) : [],
+					},
+				];
+			}
 			console.error("Batch response is not an array");
 			return [];
 		}
 
 		return parsed.map((item) => ({
 			is_bot: Boolean(item.is_bot),
-			confidence: Number(item.confidence) || 0.5,
-			category: item.category || "crypto_spam",
+			confidence: Math.min(1, Math.max(0, Number(item.confidence) || 0.5)),
+			category: validateCategory(item.category),
 			reason: String(item.reason || "Unknown"),
-			signals: Array.isArray(item.signals) ? item.signals : [],
+			signals: Array.isArray(item.signals) ? item.signals.slice(0, 5) : [],
 		}));
 	} catch {
-		console.error("Failed to parse batch AI response:", text);
+		console.error("Failed to parse batch AI response:", text.substring(0, 200));
 		return [];
 	}
 }
 
+function validateCategory(cat: unknown): SpamCategory {
+	const valid: SpamCategory[] = [
+		"engagement_farmer",
+		"sycophant",
+		"self_promoter",
+		"airdrop_farmer",
+		"crypto_spam",
+		"genuine",
+	];
+	if (typeof cat === "string" && valid.includes(cat as SpamCategory)) {
+		return cat as SpamCategory;
+	}
+	return "crypto_spam";
+}
+
 export async function classifySingleReply(reply: ReplyData): Promise<BotVerdict | null> {
 	try {
-		const prompt = buildClassificationPrompt(reply);
-
 		const message = await anthropic.messages.create({
 			model: "claude-haiku-4-5-20251001",
-			max_tokens: 512,
-			messages: [{ role: "user", content: prompt }],
+			max_tokens: 256,
+			system: SYSTEM_PROMPT,
+			messages: [{ role: "user", content: buildSingleUserMessage(reply) }],
 		});
 
 		const content = message.content[0];
@@ -97,12 +122,11 @@ export async function classifyBatchReplies(replies: ReplyData[]): Promise<(BotVe
 	}
 
 	try {
-		const prompt = buildBatchPrompt(replies);
-
 		const message = await anthropic.messages.create({
 			model: "claude-haiku-4-5-20251001",
-			max_tokens: 1024,
-			messages: [{ role: "user", content: prompt }],
+			max_tokens: 512,
+			system: SYSTEM_PROMPT,
+			messages: [{ role: "user", content: buildUserMessage(replies) }],
 		});
 
 		const content = message.content[0];
@@ -112,7 +136,6 @@ export async function classifyBatchReplies(replies: ReplyData[]): Promise<(BotVe
 
 		const parsed = parseBatchAIResponse(content.text, replies.length);
 
-		// Pad with nulls if response is incomplete
 		const results: (BotVerdict | null)[] = [];
 		for (let i = 0; i < replies.length; i++) {
 			if (parsed[i]) {

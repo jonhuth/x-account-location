@@ -1,29 +1,31 @@
-// Bot Detection Caching & Batching System
-// Multi-tier cache with request coalescing and circuit breaker
+// Bot Detection - Caching & Server Communication
+// Handles batching, caching, and server requests with proper error handling
 
+// ============================================================================
 // Configuration
+// ============================================================================
+
 const BOT_CACHE_KEY = 'bot_verdict_cache';
 const BOT_CACHE_EXPIRY_DAYS = 7;
 const BOT_CACHE_SAVE_INTERVAL = 5000;
 const BOT_BATCH_SIZE = 5;
-const BOT_BATCH_DELAY = 2000;
-const BACKEND_URL = 'https://x-bot-detector-production.up.railway.app'; // Update after deploy
+const BOT_BATCH_DELAY = 500; // Fast batching for real-time feel
+const REQUEST_TIMEOUT_MS = 8000; // 8 second timeout
+const MAX_RETRIES = 2;
+const BACKEND_URL = 'https://x-bot-detector-production.up.railway.app';
 
 // ============================================================================
-// Multi-tier Cache State
+// Cache State
 // ============================================================================
 
-// Layer 1: In-memory cache (instant)
-const botVerdictCache = new Map(); // Map<username, verdict>
-
-// Layer 2: Pending chrome.storage save
+const botVerdictCache = new Map();
 let pendingCacheSave = null;
 
 // ============================================================================
-// Batching & Coalescing State
+// Batching State
 // ============================================================================
 
-const pendingBotRequests = new Map(); // Map<username, Promise<verdict>>
+const pendingBotRequests = new Map();
 const botClassificationQueue = [];
 let batchTimeout = null;
 
@@ -35,32 +37,27 @@ let backendCircuitOpen = false;
 let circuitOpenUntil = 0;
 let consecutiveErrors = 0;
 const CIRCUIT_THRESHOLD = 3;
-const CIRCUIT_BASE_MS = 60000; // 1 minute
+const CIRCUIT_BASE_MS = 60000;
 
 // ============================================================================
 // Cache Operations
 // ============================================================================
 
-// Load bot cache from chrome.storage
 async function loadBotCache() {
   try {
     const result = await chrome.storage.local.get(BOT_CACHE_KEY);
     if (result[BOT_CACHE_KEY]) {
       const cached = result[BOT_CACHE_KEY];
       const now = Date.now();
-      let loaded = 0;
-      let expired = 0;
-      
       for (const [username, data] of Object.entries(cached)) {
         if (data.expiry && data.expiry > now) {
           botVerdictCache.set(username.toLowerCase(), data);
         }
       }
     }
-  } catch (error) { /* ignore */ }
+  } catch (e) { /* storage error */ }
 }
 
-// Save bot cache to chrome.storage (debounced)
 function saveBotCache(username, verdict) {
   const now = Date.now();
   const expiry = now + (BOT_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
@@ -71,7 +68,6 @@ function saveBotCache(username, verdict) {
     cachedAt: now
   });
   
-  // Debounce save
   if (!pendingCacheSave) {
     pendingCacheSave = setTimeout(async () => {
       await persistBotCache();
@@ -80,7 +76,6 @@ function saveBotCache(username, verdict) {
   }
 }
 
-// Persist cache to storage
 async function persistBotCache() {
   try {
     const cacheObj = {};
@@ -88,10 +83,9 @@ async function persistBotCache() {
       cacheObj[username] = data;
     }
     await chrome.storage.local.set({ [BOT_CACHE_KEY]: cacheObj });
-  } catch (error) { /* ignore */ }
+  } catch (e) { /* storage error */ }
 }
 
-// Get cached verdict (instant)
 function getCachedVerdict(username) {
   const key = username.toLowerCase();
   const cached = botVerdictCache.get(key);
@@ -100,7 +94,6 @@ function getCachedVerdict(username) {
     return cached;
   }
   
-  // Expired, remove it
   if (cached) {
     botVerdictCache.delete(key);
   }
@@ -115,7 +108,6 @@ function getCachedVerdict(username) {
 function isCircuitOpen() {
   if (!backendCircuitOpen) return false;
   if (Date.now() >= circuitOpenUntil) {
-    // Circuit expired, allow one request through
     backendCircuitOpen = false;
     return false;
   }
@@ -132,18 +124,68 @@ function recordError() {
   if (consecutiveErrors >= CIRCUIT_THRESHOLD && !backendCircuitOpen) {
     backendCircuitOpen = true;
     const backoffMs = CIRCUIT_BASE_MS * Math.pow(2, consecutiveErrors - CIRCUIT_THRESHOLD);
-    circuitOpenUntil = Date.now() + backoffMs;
+    circuitOpenUntil = Date.now() + Math.min(backoffMs, 300000); // Max 5 min
   }
 }
 
 // ============================================================================
-// Request Coalescing & Batching
+// Fetch with Timeout
 // ============================================================================
 
-/**
- * Queue a username for AI classification
- * Returns existing promise if already pending (coalescing)
- */
+async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+    return response;
+  } catch (e) {
+    clearTimeout(timeout);
+    if (e.name === 'AbortError') {
+      throw new Error('Request timeout');
+    }
+    throw e;
+  }
+}
+
+// ============================================================================
+// Single Request with Retry
+// ============================================================================
+
+async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(`${BACKEND_URL}/api/classify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ replies: [replyData] })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Server error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      return data.verdicts?.[0] || null;
+    } catch (e) {
+      if (attempt === retries) {
+        throw e;
+      }
+      // Wait before retry (exponential backoff)
+      await new Promise(r => setTimeout(r, 500 * Math.pow(2, attempt)));
+    }
+  }
+  return null;
+}
+
+// ============================================================================
+// Batch Queue & Processing
+// ============================================================================
+
 function queueForClassification(username, replyData) {
   const key = username.toLowerCase();
   
@@ -159,9 +201,14 @@ function queueForClassification(username, replyData) {
       resolve
     });
     
-    // Dispatch when batch is full or after delay
+    // Dispatch immediately when batch is full, otherwise schedule
     if (botClassificationQueue.length >= BOT_BATCH_SIZE) {
-      dispatchBatch();
+      if (batchTimeout) {
+        clearTimeout(batchTimeout);
+        batchTimeout = null;
+      }
+      // Use setImmediate equivalent for faster dispatch
+      setTimeout(dispatchBatch, 0);
     } else if (!batchTimeout) {
       batchTimeout = setTimeout(dispatchBatch, BOT_BATCH_DELAY);
     }
@@ -171,7 +218,6 @@ function queueForClassification(username, replyData) {
   return promise;
 }
 
-// Dispatch batch to backend
 async function dispatchBatch() {
   if (batchTimeout) {
     clearTimeout(batchTimeout);
@@ -181,7 +227,6 @@ async function dispatchBatch() {
   const batch = botClassificationQueue.splice(0, BOT_BATCH_SIZE);
   if (batch.length === 0) return;
   
-  // Check circuit breaker
   if (isCircuitOpen()) {
     batch.forEach(item => {
       const fallback = createFallbackVerdict('circuit_open');
@@ -192,7 +237,7 @@ async function dispatchBatch() {
   }
   
   try {
-    const response = await fetch(`${BACKEND_URL}/api/classify`, {
+    const response = await fetchWithTimeout(`${BACKEND_URL}/api/classify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -207,35 +252,51 @@ async function dispatchBatch() {
     const data = await response.json();
     recordSuccess();
     
-    // Resolve each promise with its result
-    batch.forEach((item, i) => {
-      const verdict = data.verdicts?.[i] || createFallbackVerdict('no_result');
-      saveBotCache(item.username, verdict);
-      pendingBotRequests.delete(item.username);
-      item.resolve(verdict);
-    });
+    // Process results
+    const verdicts = data.verdicts || [];
+    
+    for (let i = 0; i < batch.length; i++) {
+      const item = batch[i];
+      const verdict = verdicts[i];
+      
+      if (verdict) {
+        saveBotCache(item.username, verdict);
+        pendingBotRequests.delete(item.username);
+        item.resolve(verdict);
+      } else {
+        // Individual item failed - try single retry
+        retryIndividual(item);
+      }
+    }
     
   } catch (error) {
     recordError();
-    // Resolve all as fallback
-    batch.forEach(item => {
-      const fallback = createFallbackVerdict('error');
-      pendingBotRequests.delete(item.username);
-      item.resolve(fallback);
-    });
-  }
-  
-  // Process any remaining items in queue
-  if (botClassificationQueue.length > 0) {
-    if (botClassificationQueue.length >= BOT_BATCH_SIZE) {
-      setTimeout(dispatchBatch, 100);
-    } else {
-      batchTimeout = setTimeout(dispatchBatch, BOT_BATCH_DELAY);
+    // Batch failed - retry each individually
+    for (const item of batch) {
+      retryIndividual(item);
     }
   }
 }
 
-// Create fallback verdict when backend unavailable
+async function retryIndividual(item) {
+  try {
+    const verdict = await classifyWithRetry(item.replyData, 1);
+    if (verdict) {
+      saveBotCache(item.username, verdict);
+      pendingBotRequests.delete(item.username);
+      item.resolve(verdict);
+    } else {
+      const fallback = createFallbackVerdict('retry_failed');
+      pendingBotRequests.delete(item.username);
+      item.resolve(fallback);
+    }
+  } catch (e) {
+    const fallback = createFallbackVerdict('error');
+    pendingBotRequests.delete(item.username);
+    item.resolve(fallback);
+  }
+}
+
 function createFallbackVerdict(source) {
   return {
     isBot: false,
@@ -248,46 +309,39 @@ function createFallbackVerdict(source) {
 }
 
 // ============================================================================
-// Bot-or-Not Lookup (single username)
+// Single Username Lookup (for popup "Bot or Not")
 // ============================================================================
 
 async function lookupUsername(username, context = {}) {
   const key = username.toLowerCase();
   
-  // Check cache first
   const cached = getCachedVerdict(key);
   if (cached) {
     return { ...cached, cached: true };
   }
   
-  // Check circuit breaker
   if (isCircuitOpen()) {
     return { ...createFallbackVerdict('circuit_open'), cached: false };
   }
   
   try {
-    const params = new URLSearchParams();
-    if (context.bio) params.set('bio', context.bio);
-    if (context.displayName) params.set('displayName', context.displayName);
-    if (context.followers) params.set('followers', context.followers);
-    if (context.following) params.set('following', context.following);
-    if (context.verified) params.set('verified', context.verified);
-    if (context.heuristicScore) params.set('heuristicScore', context.heuristicScore);
-    if (context.userFollows) params.set('userFollows', context.userFollows);
+    const verdict = await classifyWithRetry({
+      username: key,
+      displayName: context.displayName || username,
+      replyText: context.replyText || '',
+      bio: context.bio || '',
+      followers: context.followers || 0,
+      following: context.following || 0,
+      hasCustomAvatar: context.hasCustomAvatar ?? true,
+      isVerified: context.isVerified ?? false,
+      userFollows: context.userFollows ?? false,
+      mutualCount: context.mutualCount ?? 0,
+    });
     
-    const url = `${BACKEND_URL}/api/lookup/${key}?${params.toString()}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`Lookup error: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    recordSuccess();
-    
-    if (data.verdict) {
-      saveBotCache(key, data.verdict);
-      return { ...data.verdict, cached: false };
+    if (verdict) {
+      saveBotCache(key, verdict);
+      recordSuccess();
+      return { ...verdict, cached: false };
     }
     
     return { ...createFallbackVerdict('no_verdict'), cached: false };
@@ -311,17 +365,20 @@ async function loadWhitelist() {
     if (result[WHITELIST_KEY]) {
       whitelistSet = new Set(result[WHITELIST_KEY].map(u => u.toLowerCase()));
     }
-  } catch (error) { /* ignore */ }
+  } catch (e) { /* storage error */ }
 }
 
 async function addToWhitelist(username) {
-  whitelistSet.add(username.toLowerCase());
+  const key = username.toLowerCase();
+  whitelistSet.add(key);
+  botVerdictCache.delete(key);
+  
   try {
-    await chrome.storage.local.set({
-      [WHITELIST_KEY]: Array.from(whitelistSet)
-    });
-    botVerdictCache.delete(username.toLowerCase());
-  } catch (error) { /* ignore */ }
+    await Promise.all([
+      chrome.storage.local.set({ [WHITELIST_KEY]: Array.from(whitelistSet) }),
+      persistBotCache()
+    ]);
+  } catch (e) { /* storage error */ }
 }
 
 async function removeFromWhitelist(username) {
@@ -330,7 +387,7 @@ async function removeFromWhitelist(username) {
     await chrome.storage.local.set({
       [WHITELIST_KEY]: Array.from(whitelistSet)
     });
-  } catch (error) { /* ignore */ }
+  } catch (e) { /* storage error */ }
 }
 
 function isWhitelisted(username) {
@@ -342,7 +399,7 @@ function getWhitelist() {
 }
 
 // ============================================================================
-// Statistics
+// Stats
 // ============================================================================
 
 function getBotStats() {
@@ -353,49 +410,34 @@ function getBotStats() {
   for (const [, verdict] of botVerdictCache.entries()) {
     if (verdict.isBot) {
       bots++;
-      categories[verdict.category] = (categories[verdict.category] || 0) + 1;
+      const cat = verdict.category || 'unknown';
+      categories[cat] = (categories[cat] || 0) + 1;
     } else {
       humans++;
     }
   }
   
-  return {
-    total: botVerdictCache.size,
-    bots,
-    humans,
-    categories,
-    whitelisted: whitelistSet.size,
-    circuitOpen: backendCircuitOpen,
-    consecutiveErrors
-  };
+  return { bots, humans, categories, total: bots + humans };
 }
 
 // ============================================================================
-// Initialize
-// ============================================================================
-
-async function initBotCache() {
-  await loadBotCache();
-  await loadWhitelist();
-}
-
 // Export
+// ============================================================================
+
 if (typeof window !== 'undefined') {
   window.BotCache = {
-    initBotCache,
     loadBotCache,
+    loadWhitelist,
     getCachedVerdict,
     saveBotCache,
+    persistBotCache,
     queueForClassification,
     lookupUsername,
-    // Whitelist
     addToWhitelist,
     removeFromWhitelist,
     isWhitelisted,
     getWhitelist,
-    // Stats
     getBotStats,
-    // Config
     BACKEND_URL,
   };
 }

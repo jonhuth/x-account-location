@@ -1,456 +1,92 @@
-// Bot Detection Heuristics Engine
-// Fast local scoring (0-100) with spam signals (+) and legitimacy signals (-)
+// Bot Detection - Minimal Client
+// Only extracts DOM data, all scoring done server-side
 
 // ============================================================================
-// BUZZWORD LISTS
+// DATA EXTRACTION ONLY - No pattern matching, no scoring
 // ============================================================================
 
-const CRYPTO_BIO_BUZZWORDS = [
-  // Identity labels
-  'web3', 'crypto native', 'defi degen', 'nft collector', 'dao contributor',
-  'onchain', 'blockchain', 'decentralized', 'permissionless',
-  // Activity claims
-  'building in public', 'shipping daily', 'exploring', 'researching',
-  'yapper', 'alpha seeker', 'airdrop hunter', 'degen',
-  // Cringe signals
-  'gm/gn', 'wagmi', 'ngmi', 'probably nothing', 'few understand',
-  'future millionaire', 'generational wealth', 'exit liquidity',
-  // Role claims without substance
-  'advisor', 'consultant', 'helping projects', 'dm for collabs',
-  // Maxi indicators
-  'eth maxi', 'sol maxi', 'btc maxi', 'chain agnostic',
-];
-
-const CRYPTO_NAME_RED_FLAGS = [
-  /\.eth$/i, /\.sol$/i, /\.lens$/i, /\.base$/i,
-  /crypto\s?\w+/i, /\w+\s?crypto/i,
-  /web3\s?\w+/i, /\w+\s?web3/i,
-  /defi\s?\w+/i, /nft\s?\w+/i,
-  /[🚀💎🔥⚡️💰🌙]+/, // emoji patterns
-  /\d{4,}$/, // ends in 4+ numbers
-  /_\d+$/, // underscore + numbers
-];
-
-const VAPID_REPLY_PATTERNS = [
-  /^(great|amazing|incredible|insane|fire|based)\s+(thread|take|post|point)/i,
-  /^this\s+(is\s+)?(so\s+)?(true|it|the way|bullish)/i,
-  /^(bullish|bearish)\s+(on\s+)?this/i,
-  /^more people need to (see|hear|understand) this/i,
-  /^saving this/i,
-  /^(underrated|overrated)\s+(thread|take)/i,
-  /^(gm|gn|wagmi|ngmi|lfg|letsgo)/i,
-  /^facts\.?$/i,
-  /^(real|true|valid)\.?$/i,
-  /^this is (exactly )?why/i,
-  /^couldn't agree more/i,
-  /^(nailed it|spot on|on point)/i,
-  /^100%$/i,
-  /^fax\.?$/i,
-  /^w take\.?$/i,
-  /^massive\.?$/i,
-  /^huge\.?$/i,
-  /^🔥+$/,
-  /^💯+$/,
-];
-
-const GENERIC_PRAISE_PHRASES = [
-  'great thread', 'amazing thread', 'incredible thread',
-  'love this', 'so true', 'exactly this', 'this is the way',
-  'bullish', 'based', 'gigabrain', 'alpha', 'gem',
-  'ser', 'fren', 'anon', 'king', 'legend',
-  'lfg', 'lets go', 'wagmi', 'gm', 'gn',
-];
-
-const ENGAGEMENT_BAIT_PHRASES = [
-  'thoughts?', 'what do you think', 'curious to hear',
-  'would love to connect', 'dm me', 'let\'s chat',
-  'drop a', 'comment below', 'who else',
-];
-
-const SELF_PROMO_PATTERNS = [
-  /this is (exactly )?why (we|i)'?m? building/i,
-  /we solved this at/i,
-  /check out (our|my)/i,
-  /reminds me of what we'?re? doing/i,
-  /at \[?\w+\]? we/i,
-];
-
-// High-spam regions (based on observed bot farm patterns)
-const SPAM_REGION_TIERS = {
-  tier1: ['Nigeria', 'Pakistan', 'Bangladesh', 'Philippines', 'India', 'Indonesia', 'Vietnam'],
-  tier2: ['Kenya', 'Ghana', 'Sri Lanka', 'Nepal', 'Egypt', 'Morocco'],
-};
-
-// ============================================================================
-// CORE SIGNALS (40 points max)
-// ============================================================================
-
-function getCoreSignals(accountData, replyElement) {
-  let score = 0;
-  const username = String(accountData.username || '');
-  
-  // Account age: Created < 90 days (only with real data)
-  if (accountData.hasTwitterData && accountData.createdAt) {
-    try {
-      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-      const ageDays = ageMs / (24 * 60 * 60 * 1000);
-      if (ageDays < 30) score += 10;
-      else if (ageDays < 90) score += 5;
-    } catch (e) { /* Invalid date */ }
-  }
-  
-  // Default avatar (8 points) - boosted, works without Twitter data
-  if (accountData.hasCustomAvatar === false) {
-    score += 8;
-  }
-  
-  // Handle pattern: random suffix, underscores + numbers (15 points) - boosted
-  // These signals work without Twitter data
-  if (/[a-z]+\d{6,}$/i.test(username)) score += 15;
-  else if (/_\d{3,}$/.test(username)) score += 12;
-  else if (/\d{4,}$/.test(username)) score += 8;
-  
-  // Suspicious username patterns (works without Twitter data)
-  // All lowercase + numbers at end
-  if (/^[a-z]+\d{3,}$/i.test(username)) score += 5;
-  // Very short usernames with numbers
-  if (username.length < 8 && /\d{2,}/.test(username)) score += 3;
-  
-  // Reply timing: within 60s of original (15 points)
-  if (typeof accountData.secondsAfterOriginal === 'number' && accountData.secondsAfterOriginal > 0) {
-    if (accountData.secondsAfterOriginal < 30) score += 15;
-    else if (accountData.secondsAfterOriginal < 60) score += 10;
-    else if (accountData.secondsAfterOriginal < 120) score += 5;
-  }
-  
-  return Math.min(score, 45); // Raised cap from 40 to 45
-}
-
-// ============================================================================
-// CONTENT SIGNALS (30 points max)
-// ============================================================================
-
-function getContentSignals(replyText) {
-  let score = 0;
-  // Defensive: ensure replyText is a string
-  const text = String(replyText || '').toLowerCase().trim();
-  
-  if (!text) return 0;
-  
-  // Generic praise (15 points) - boosted, these are strong spam signals
-  const praiseCount = GENERIC_PRAISE_PHRASES.filter(phrase => 
-    text.includes(phrase.toLowerCase())
-  ).length;
-  if (praiseCount >= 3) score += 15;
-  else if (praiseCount >= 2) score += 12;
-  else if (praiseCount >= 1) score += 6;
-  
-  // Vapid agreement patterns (12 points) - boosted
-  const vapidMatch = VAPID_REPLY_PATTERNS.some(pattern => pattern.test(text));
-  if (vapidMatch) score += 12;
-  
-  // Engagement bait (10 points) - boosted
-  const engagementMatch = ENGAGEMENT_BAIT_PHRASES.some(phrase => 
-    text.includes(phrase.toLowerCase())
-  );
-  if (engagementMatch) score += 10;
-  
-  // Self-promotion (8 points) - boosted
-  const selfPromoMatch = SELF_PROMO_PATTERNS.some(pattern => pattern.test(text));
-  if (selfPromoMatch) score += 8;
-  
-  // Very short replies are suspicious (5 points)
-  if (text.length < 20 && text.length > 0) score += 5;
-  
-  // Just emojis (8 points)
-  if (/^[\p{Emoji}\s]+$/u.test(text)) score += 8;
-  
-  // Multiple emoji spam (5 points)
-  const emojiMatch = text.match(/[\p{Emoji}]/gu);
-  if (emojiMatch && emojiMatch.length >= 3) score += 5;
-  
-  return Math.min(score, 40); // Raised cap from 30 to 40
-}
-
-// ============================================================================
-// CRYPTO-SPECIFIC SIGNALS (30 points max)
-// ============================================================================
-
-function getCryptoSignals(accountData) {
-  let score = 0;
-  // Defensive: ensure strings
-  const bio = String(accountData.bio || '').toLowerCase();
-  const displayName = String(accountData.displayName || '');
-  const username = String(accountData.username || '').toLowerCase();
-  
-  // Bio buzzword density (12 points) - only if we have bio data
-  if (bio) {
-    const buzzwordCount = CRYPTO_BIO_BUZZWORDS.filter(word => 
-      bio.includes(word.toLowerCase())
-    ).length;
-    if (buzzwordCount >= 4) score += 12;
-    else if (buzzwordCount >= 3) score += 9;
-    else if (buzzwordCount >= 2) score += 6;
-    else if (buzzwordCount >= 1) score += 3;
-    
-    // Kaito indicators (5 points)
-    if (bio.includes('yapper') || bio.includes('kaito') || bio.includes('engagement')) {
-      score += 5;
-    }
-    
-    // Engagement stats in bio
-    if (/\d+[kmb]?\+?\s*(impressions|views|followers)/i.test(bio)) {
-      score += 5;
-    }
-  }
-  
-  // Name red flags (12 points) - boosted, works with DOM-only data
-  // displayName is visible on every tweet
-  const nameMatch = CRYPTO_NAME_RED_FLAGS.some(pattern => 
-    pattern.test(displayName) || pattern.test(username)
-  );
-  if (nameMatch) score += 12;
-  
-  // Username-specific patterns (works without Twitter data)
-  // Multiple underscores + numbers pattern
-  if (/[a-z]+_[a-z]+_?\d*/i.test(username) && /\d{3,}/.test(username)) {
-    score += 8;
-  }
-  
-  // "Official" or "Real" in display name (common bot pattern)
-  if (/\b(official|real|verified)\b/i.test(displayName) && !accountData.isVerified) {
-    score += 10;
-  }
-  
-  // Chain emoji spam (5 points)
-  const chainEmojis = ['◎', '⟠', '🔵', '⬛', '🔶', '💜'];
-  const chainEmojiCount = chainEmojis.filter(emoji => 
-    bio.includes(emoji) || displayName.includes(emoji)
-  ).length;
-  if (chainEmojiCount >= 2) score += 5;
-  else if (chainEmojiCount >= 1) score += 2;
-  
-  return Math.min(score, 30);
-}
-
-// ============================================================================
-// BEHAVIORAL SIGNALS (20 points max)
-// ============================================================================
-
-function getBehavioralSignals(accountData, threadContext = {}) {
-  let score = 0;
-  
-  // Thread bombing: same account 2+ times in thread (8 points)
-  if (threadContext.sameAccountReplies && threadContext.sameAccountReplies >= 2) {
-    score += 8;
-  }
-  
-  // Skip ratio-based signals if we don't have real Twitter data
-  if (!accountData.hasTwitterData) return Math.min(score, 20);
-  
-  // Engagement ratio: Following >> Followers (7 points)
-  const followers = accountData.followers || 0;
-  const following = accountData.following || 0;
-  
-  if (following > 0 && followers > 0) {
-    const ratio = followers / following;
-    // Suspicious: following >> followers (farming pattern)
-    if (ratio < 0.2 && following > 1000) score += 7;
-    else if (ratio < 0.5 && following > 500) score += 4;
-  } else if (following > 1000 && followers < 100) {
-    score += 7; // Classic farming pattern
-  }
-  
-  // High activity on new account
-  if (accountData.createdAt) {
-    try {
-      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-      const ageDays = ageMs / (24 * 60 * 60 * 1000);
-      if (ageDays < 90 && following > 500) {
-        score += 5;
+/**
+ * Extract reply data from DOM element
+ * Returns structured data for server-side AI classification
+ */
+function extractReplyDataFromElement(el, username) {
+  try {
+    // Display name
+    const userNameContainer = el.querySelector('[data-testid="User-Name"], [data-testid="UserName"]');
+    let displayName = username;
+    if (userNameContainer) {
+      const nameLink = userNameContainer.querySelector('a[href^="/"]');
+      if (nameLink) {
+        const fullText = nameLink.textContent?.trim() || '';
+        if (fullText && !fullText.startsWith('@')) {
+          displayName = fullText;
+        }
       }
-    } catch (e) { /* invalid date */ }
+    }
+    
+    // Reply text
+    const replyText = el.querySelector('[data-testid="tweetText"]')?.textContent?.trim() || '';
+    
+    // Avatar check
+    const avatarEl = el.querySelector('img[src*="profile_images"]');
+    const hasCustomAvatar = avatarEl ? !avatarEl.src.includes('default_profile') : true;
+    
+    // Verified badge - check multiple selectors
+    const isVerified = !!(
+      el.querySelector('[data-testid="icon-verified"]') ||
+      el.querySelector('svg[aria-label*="Verified"]') ||
+      el.querySelector('[aria-label*="Verified"]') ||
+      userNameContainer?.querySelector('svg[data-testid="icon-verified"]') ||
+      userNameContainer?.querySelector('[data-testid="icon-verified"]') ||
+      userNameContainer?.querySelector('svg[viewBox="0 0 22 22"]')
+    );
+    
+    return {
+      username,
+      displayName,
+      replyText,
+      hasCustomAvatar,
+      isVerified,
+      // These are not available from DOM - server handles missing data
+      bio: '',
+      followers: 0,
+      following: 0,
+      createdAt: '',
+    };
+  } catch (e) {
+    return null;
   }
-  
-  return Math.min(score, 20);
-}
-
-// ============================================================================
-// LOCATION SIGNAL (15 points max)
-// ============================================================================
-
-function getLocationScore(location, otherSignalsScore) {
-  // Location only matters if already suspicious (other signals >= 25)
-  if (otherSignalsScore < 25) return 0;
-  
-  if (!location) return 5;
-  
-  const locationLower = location.toLowerCase();
-  
-  // Tier 1: +10 points
-  if (SPAM_REGION_TIERS.tier1.some(c => locationLower.includes(c.toLowerCase()))) {
-    return 10;
-  }
-  
-  // Tier 2: +5 points
-  if (SPAM_REGION_TIERS.tier2.some(c => locationLower.includes(c.toLowerCase()))) {
-    return 5;
-  }
-  
-  return 0;
-}
-
-// ============================================================================
-// LEGITIMACY SIGNALS (Negative Score - Reduce Suspicion)
-// ============================================================================
-
-function getFollowerRatioReduction(followers, following) {
-  if (following === 0) return 0; // Can't calculate ratio
-  
-  const ratio = followers / following;
-  
-  // Strong ratio: followers >= 10x following
-  if (ratio >= 10 && followers >= 1000) return -15;
-  
-  // Moderate ratio: followers >= 3x following  
-  if (ratio >= 3 && followers >= 500) return -10;
-  
-  // Slight positive: more followers than following
-  if (ratio >= 1.5 && followers >= 100) return -5;
-  
-  return 0;
-}
-
-function calculateLegitimacyReduction(accountData, userContext = {}) {
-  let reduction = 0;
-  
-  // You follow them (strongest signal) - -30
-  if (userContext.userFollows) {
-    reduction -= 30;
-  }
-  
-  // Mutual follows - -10 to -20
-  const mutualCount = userContext.mutualCount || 0;
-  if (mutualCount >= 5) reduction -= 20;
-  else if (mutualCount >= 2) reduction -= 10;
-  else if (mutualCount >= 1) reduction -= 5;
-  
-  // Verified from DOM - -15
-  if (accountData.isVerified) reduction -= 15;
-  
-  // Skip data-dependent signals if we don't have real Twitter data
-  if (!accountData.hasTwitterData) return reduction;
-  
-  // Follower ratio (only with real data)
-  reduction += getFollowerRatioReduction(
-    accountData.followers || 0, 
-    accountData.following || 0
-  );
-  
-  // Account age > 2 years - -10
-  if (accountData.createdAt) {
-    try {
-      const ageMs = Date.now() - new Date(accountData.createdAt).getTime();
-      const ageYears = ageMs / (365 * 24 * 60 * 60 * 1000);
-      if (ageYears >= 2) reduction -= 10;
-      else if (ageYears >= 1) reduction -= 5;
-    } catch (e) { /* invalid date */ }
-  }
-  
-  // High followers (absolute) - -5 to -15
-  const followers = accountData.followers || 0;
-  if (followers >= 50000) reduction -= 15;
-  else if (followers >= 10000) reduction -= 10;
-  else if (followers >= 5000) reduction -= 5;
-  
-  return reduction;
-}
-
-// ============================================================================
-// MAIN SCORING FUNCTION
-// ============================================================================
-
-/**
- * Calculate bot score for a reply
- * @param {Object} accountData - Account information
- * @param {string} replyText - The reply text
- * @param {Object} userContext - User following context
- * @param {Object} threadContext - Thread-level context
- * @returns {Object} { score, breakdown }
- */
-function calculateBotScore(replyData, sensitivity = 3) {
-  // Normalize input - replyData contains all account and reply info
-  const accountData = replyData || {};
-  const replyText = String(accountData.replyText || '');
-  const userContext = {
-    userFollows: accountData.userFollows || false,
-    mutualCount: accountData.mutualCount || 0
-  };
-  const threadContext = {};
-  
-  const breakdown = {};
-  
-  // Positive signals (increases bot likelihood)
-  breakdown.core = getCoreSignals(accountData);
-  breakdown.content = getContentSignals(replyText);
-  breakdown.crypto = getCryptoSignals(accountData);
-  breakdown.behavioral = getBehavioralSignals(accountData, threadContext);
-  
-  // Calculate subtotal before location (location requires >= 25)
-  const subtotal = breakdown.core + breakdown.content + breakdown.crypto + breakdown.behavioral;
-  
-  // Location signal (only if other signals >= 25)
-  breakdown.location = getLocationScore(accountData.location, subtotal);
-  
-  // Positive total
-  const positiveScore = subtotal + breakdown.location;
-  
-  // Negative signals (reduces bot likelihood)
-  breakdown.legitimacy = calculateLegitimacyReduction(accountData, userContext);
-  
-  // Final score
-  const rawScore = positiveScore + breakdown.legitimacy;
-  const score = Math.max(0, Math.min(100, rawScore));
-  
-  return {
-    score,
-    breakdown,
-    rawScore,
-    positiveScore,
-    legitimacyReduction: breakdown.legitimacy,
-  };
 }
 
 /**
- * Determine action based on score
- * @param {number} score
- * @param {boolean} hasTwitterData - Whether we have full profile data
- * @returns {'dim' | 'ai' | 'none'}
+ * Determine if reply should be sent to server for classification
+ * Simple checks only - no pattern matching
  */
-function getActionForScore(score, hasTwitterData = true) {
-  // With full Twitter data: higher thresholds (more signals available)
-  if (hasTwitterData) {
-    if (score >= 65) return 'dim';      // High confidence bot
-    if (score >= 40) return 'ai';       // Send to AI
-    return 'none';                       // Likely human
+function shouldClassify(replyData, isWhitelisted, userFollows) {
+  // Never classify whitelisted accounts
+  if (isWhitelisted) return { action: 'skip', reason: 'whitelisted' };
+  
+  // User follows = strong legitimacy signal, only classify if very short/empty
+  if (userFollows) {
+    // Only flag if literally empty or single character
+    if (replyData.replyText.length > 1) {
+      return { action: 'skip', reason: 'user_follows' };
+    }
   }
   
-  // Without Twitter data: lower thresholds (fewer signals, rely on content)
-  // This ensures bots get flagged even without profile data
-  if (score >= 45) return 'dim';      // High confidence bot (content signals alone)
-  if (score >= 25) return 'ai';       // Send to AI for analysis
-  return 'none';                       // Likely human
+  // Verified accounts with substantive replies = skip
+  if (replyData.isVerified && replyData.replyText.length > 50) {
+    return { action: 'skip', reason: 'verified_substantive' };
+  }
+  
+  // Everything else goes to server for AI classification
+  return { action: 'classify', reason: 'needs_analysis' };
 }
 
-// Export for use in content.js
+// Export minimal interface
 if (typeof window !== 'undefined') {
   window.BotDetection = {
-    calculateBotScore,
-    getActionForScore,
-    // Expose constants for debugging
-    CRYPTO_BIO_BUZZWORDS,
-    CRYPTO_NAME_RED_FLAGS,
-    VAPID_REPLY_PATTERNS,
-    SPAM_REGION_TIERS,
+    extractReplyDataFromElement,
+    shouldClassify,
   };
 }

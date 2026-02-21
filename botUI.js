@@ -1,146 +1,214 @@
 // Bot Detection UI Components
-// Handles visual rendering of bot detection results
+// Real-time feel with optimistic updates and smooth animations
 
 // ============================================================================
-// Styles
+// Styles - Optimized for perceived performance
 // ============================================================================
 
 const BOT_UI_STYLES = `
-/* Bot badge - inline like country flags */
+/* Bot badge - compact, inline */
 .bot-badge {
-  display: inline;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
   font-weight: 600;
-  padding: 0 5px;
-  border-radius: 4px;
+  padding: 1px 6px;
+  border-radius: 3px;
   margin-left: 4px;
-  margin-right: 2px;
   vertical-align: middle;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  line-height: 1.3;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  transition: all 0.15s ease;
+  transform: scale(1);
 }
 
-/* High confidence bot - Red like botblock */
+/* Entrance animation */
+@keyframes bot-badge-enter {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.bot-badge-enter {
+  animation: bot-badge-enter 0.15s ease forwards;
+}
+
+/* High confidence bot - Red */
 .bot-badge-high {
-  background: #ef4444;
+  background: #dc2626;
   color: #fff;
 }
 
-/* Medium confidence - Orange/Amber */
+/* Medium confidence - Amber */
 .bot-badge-medium {
   background: #f59e0b;
   color: #000;
 }
 
-/* Low/Suspicious - Gray */
+/* Low/Suspicious - Muted */
 .bot-badge-low {
-  background: #6b7280;
-  color: #fff;
+  background: #525252;
+  color: #e5e5e5;
 }
 
-/* Pending analysis */
+/* Pending analysis - subtle shimmer */
 .bot-badge-pending {
-  background: #374151;
-  color: #9ca3af;
+  background: linear-gradient(90deg, #27272a 0%, #3f3f46 50%, #27272a 100%);
+  background-size: 200% 100%;
+  color: #71717a;
+  animation: bot-shimmer 1.5s ease-in-out infinite;
 }
 
-/* Score display */
-.bot-badge-score {
-  font-weight: 400;
-  opacity: 0.9;
-  margin-left: 2px;
+@keyframes bot-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
-/* "Hide again" button - inline style */
+/* "Hide again" button */
 .bot-hide-btn {
-  display: inline;
-  font-size: 12px;
-  padding: 0 5px;
-  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
   margin-left: 4px;
-  background: #374151;
-  color: #9ca3af;
+  background: #27272a;
+  color: #a1a1aa;
   border: none;
   cursor: pointer;
   vertical-align: middle;
+  transition: all 0.1s ease;
 }
 
 .bot-hide-btn:hover {
-  background: #4b5563;
+  background: #3f3f46;
   color: #fff;
 }
 
-/* Dimmed reply */
+/* Dimmed reply - smooth transition */
 .bot-reply-dimmed {
-  opacity: 0.3 !important;
-  transition: opacity 0.2s ease;
+  opacity: 0.2 !important;
+  filter: grayscale(0.6) blur(0.5px);
+  transition: opacity 0.2s ease, filter 0.2s ease;
 }
 
 .bot-reply-dimmed:hover {
   opacity: 0.5 !important;
+  filter: grayscale(0.3) blur(0);
 }
 
-/* Red left border for bot tweets */
+/* Left border accent */
 .bot-reply-flagged {
-  border-left: 3px solid #ef4444 !important;
+  border-left: 2px solid #dc2626 !important;
+  padding-left: 12px !important;
+  transition: border-color 0.15s ease;
 }
 
 .bot-reply-flagged-medium {
-  border-left: 3px solid #f59e0b !important;
+  border-left: 2px solid #f59e0b !important;
+  padding-left: 12px !important;
 }
 
-/* Quick actions container - shows on hover */
+/* Quick actions - appear on hover */
 .bot-actions {
   position: absolute;
-  top: 8px;
-  right: 48px;
+  top: 4px;
+  right: 44px;
   display: flex;
-  gap: 4px;
+  gap: 6px;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  z-index: 10;
+  transform: translateY(-4px);
+  transition: opacity 0.1s ease, transform 0.1s ease;
+  z-index: 100;
+  pointer-events: none;
 }
 
 article[data-testid="tweet"]:hover .bot-actions {
   opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
 }
 
 .bot-action-btn {
-  padding: 4px 8px;
-  font-size: 11px;
+  padding: 5px 10px;
+  font-size: 12px;
   font-weight: 500;
-  border-radius: 4px;
+  border-radius: 6px;
   border: none;
   cursor: pointer;
-  background: rgba(0,0,0,0.7);
-  backdrop-filter: blur(4px);
+  background: rgba(0,0,0,0.9);
+  backdrop-filter: blur(8px);
+  transition: all 0.1s ease;
 }
 
 .bot-action-whitelist {
-  color: #1d9bf0;
+  color: #22c55e;
 }
 
 .bot-action-whitelist:hover {
-  background: rgba(29, 155, 240, 0.3);
+  background: #22c55e;
+  color: #000;
+  transform: scale(1.05);
 }
 
 .bot-action-block {
-  color: #f4212e;
+  color: #ef4444;
 }
 
 .bot-action-block:hover {
-  background: rgba(244, 33, 46, 0.3);
+  background: #ef4444;
+  color: #fff;
+  transform: scale(1.05);
 }
 
-/* Pending pulse animation */
-@keyframes bot-pulse {
-  0%, 100% { opacity: 0.5; }
-  50% { opacity: 1; }
+/* Toast notification */
+.bot-toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%) translateY(0);
+  background: #18181b;
+  color: #fafafa;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 10000;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  animation: bot-toast-in 0.2s ease;
 }
 
-.bot-badge-pending {
-  animation: bot-pulse 1.5s ease-in-out infinite;
+@keyframes bot-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* Skeleton loading for pending */
+.bot-skeleton {
+  display: inline-block;
+  width: 36px;
+  height: 14px;
+  margin-left: 4px;
+  vertical-align: middle;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #27272a 0%, #3f3f46 50%, #27272a 100%);
+  background-size: 200% 100%;
+  animation: bot-shimmer 1.2s ease-in-out infinite;
+}
+
+/* Processed indicator (subtle) */
+.bot-checked {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: #22c55e;
+  opacity: 0.4;
+  vertical-align: middle;
 }
 `;
 
@@ -150,12 +218,30 @@ article[data-testid="tweet"]:hover .bot-actions {
 
 function injectBotStyles() {
   if (document.getElementById('bot-ui-styles')) return;
-  
   const style = document.createElement('style');
   style.id = 'bot-ui-styles';
   style.textContent = BOT_UI_STYLES;
   document.head.appendChild(style);
-  console.log('BotUI: Styles injected'); // Debug: confirm styles load
+}
+
+// ============================================================================
+// Toast Notifications
+// ============================================================================
+
+function showToast(message, duration = 2000) {
+  const existing = document.querySelector('.bot-toast');
+  if (existing) existing.remove();
+  
+  const toast = document.createElement('div');
+  toast.className = 'bot-toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(10px)';
+    setTimeout(() => toast.remove(), 150);
+  }, duration);
 }
 
 // ============================================================================
@@ -171,106 +257,101 @@ const CATEGORY_LABELS = {
   genuine: 'Human',
 };
 
-/**
- * Get severity level based on confidence score
- * Matches botblock.ai styling
- */
 function getSeverityLevel(confidence) {
-  if (confidence >= 0.75) return 'high';      // Red - "Bot"
-  if (confidence >= 0.5) return 'medium';     // Orange - "Suspicious"
-  return 'low';                                // Gray
+  if (confidence >= 0.75) return 'high';
+  if (confidence >= 0.5) return 'medium';
+  return 'low';
 }
 
-/**
- * Get display label based on confidence
- * High confidence = "Bot", lower = "Suspicious"
- */
-function getBadgeLabel(verdict) {
-  if (verdict.isBot === 'pending') return '...';
-  if (!verdict.isBot) return 'OK';
-  
-  const conf = verdict.confidence || 0;
-  if (conf >= 0.75) return 'Bot';
-  if (conf >= 0.5) return 'Suspicious';
-  return 'Low';
-}
-
-// Badge colors matching botblock.ai
 const BADGE_COLORS = {
-  high: { bg: '#ef4444', fg: '#ffffff' },    // Red
-  medium: { bg: '#f59e0b', fg: '#000000' },  // Amber
-  low: { bg: '#6b7280', fg: '#ffffff' },     // Gray
-  pending: { bg: '#374151', fg: '#9ca3af' }  // Dark gray
+  high: { bg: '#dc2626', fg: '#ffffff' },
+  medium: { bg: '#f59e0b', fg: '#000000' },
+  low: { bg: '#525252', fg: '#ffffff' },
+  pending: { bg: '#374151', fg: '#9ca3af' }
 };
 
-function createBotBadge(verdict) {
+function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
   
   let severity = 'pending';
-  let text = '...';
+  let text = '•••';
   let title = 'Analyzing...';
   
   if (verdict.isBot === 'pending') {
     severity = 'pending';
-    text = '...';
+    text = '•••';
     title = 'Analyzing...';
   } else if (verdict.isBot) {
     const confidence = verdict.confidence || 0;
     severity = getSeverityLevel(confidence);
-    const label = getBadgeLabel(verdict);
-    const score = Math.round(confidence * 100) / 10;
     
     if (severity === 'high') {
-      text = 'Bot · Hidden';
+      text = '🤖 BOT';
+    } else if (severity === 'medium') {
+      text = '⚠️ SUS';
     } else {
-      text = `${label} · ${score.toFixed(1)}`;
+      text = '? LOW';
     }
     
     const category = CATEGORY_LABELS[verdict.category] || 'Bot';
-    title = `${category}: ${verdict.reason || 'Automated behavior detected'}`;
+    const pct = Math.round(confidence * 100);
+    title = `${pct}% · ${category}\n${verdict.reason || ''}`;
   }
   
   const colors = BADGE_COLORS[severity];
   
-  // Apply inline styles directly (ensures they work even if stylesheet fails)
   Object.assign(badge.style, {
-    display: 'inline',
-    fontSize: '12px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: '11px',
     fontWeight: '600',
-    padding: '0 5px',
-    borderRadius: '4px',
+    padding: '1px 6px',
+    borderRadius: '3px',
     marginLeft: '4px',
-    marginRight: '2px',
     verticalAlign: 'middle',
     cursor: 'pointer',
     userSelect: 'none',
     whiteSpace: 'nowrap',
     backgroundColor: colors.bg,
-    color: colors.fg
+    color: colors.fg,
+    lineHeight: '1.3'
   });
   
   badge.textContent = text;
   badge.title = title;
-  badge.className = `bot-badge bot-badge-${severity}`;
+  badge.className = `bot-badge bot-badge-${severity}${animate ? ' bot-badge-enter' : ''}`;
   
   return badge;
 }
 
-/**
- * Create "Hide again" button for revealed bots
- */
-function createHideAgainButton(container, verdict, username) {
+// Create skeleton loader for pending state
+function createSkeleton() {
+  const skeleton = document.createElement('span');
+  skeleton.className = 'bot-skeleton';
+  skeleton.setAttribute('data-bot-skeleton', 'true');
+  return skeleton;
+}
+
+// Create subtle "checked" dot for verified humans
+function createCheckedDot() {
+  const dot = document.createElement('span');
+  dot.className = 'bot-checked';
+  dot.setAttribute('data-bot-checked', 'true');
+  dot.title = 'Verified human';
+  return dot;
+}
+
+function createHideAgainButton(container) {
   const btn = document.createElement('button');
   btn.className = 'bot-hide-btn';
   btn.setAttribute('data-bot-hide-btn', 'true');
-  btn.textContent = 'Hide again';
-  btn.title = 'Re-hide this bot reply';
+  btn.textContent = 'Hide';
+  btn.title = 'Re-hide this reply';
   
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
-    // Re-apply dimming
     container.classList.add('bot-reply-dimmed');
     btn.remove();
   });
@@ -283,130 +364,119 @@ function createHideAgainButton(container, verdict, username) {
 // ============================================================================
 
 function getReplyContainer(element) {
-  // Find the article element (tweet container)
   return element.closest('article[data-testid="tweet"]') || element;
 }
 
-/**
- * Find the @handle section within the username container
- * MUST match the exact approach in content.js for country flags
- */
 function findHandleSection(container, screenName) {
   if (!screenName) return null;
-  
-  // Match EXACTLY how content.js does it (case-sensitive, no 'i' flag)
   return Array.from(container.querySelectorAll('div')).find(div => {
     const link = div.querySelector(`a[href="/${screenName}"]`);
     return link && link.textContent?.trim() === `@${screenName}`;
   });
 }
 
-/**
- * Insert bot badge into the username container
- * 
- * PRIORITY ORDER:
- * 1. After country flag (if exists) - keeps them together
- * 2. Before @handle section (same as flag placement)
- * 3. After display name
- * 4. Fallback: append
- */
 function insertBotBadge(container, badge, screenName) {
-  // BEST: Insert after country flag (keeps flag + badge together inline)
+  // After country flag if exists
   const existingFlag = container.querySelector('[data-twitter-flag]');
   if (existingFlag) {
-    try {
-      // Insert badge right after the flag
-      existingFlag.after(badge);
-      return true;
-    } catch (e) { /* continue */ }
+    try { existingFlag.after(badge); return true; } catch { /* continue */ }
   }
   
-  // Find handle section (@username)
   const handleSection = findHandleSection(container, screenName);
   
-  // Strategy 2: Insert before handle section if direct child
   if (handleSection && handleSection.parentNode === container) {
-    try {
-      container.insertBefore(badge, handleSection);
-      return true;
-    } catch (e) { /* continue */ }
+    try { container.insertBefore(badge, handleSection); return true; } catch { /* continue */ }
   }
   
-  // Strategy 3: Insert before handle section's parent
   if (handleSection?.parentNode && handleSection.parentNode !== container) {
-    try {
-      handleSection.parentNode.insertBefore(badge, handleSection);
-      return true;
-    } catch (e) { /* continue */ }
+    try { handleSection.parentNode.insertBefore(badge, handleSection); return true; } catch { /* continue */ }
   }
   
-  // Strategy 4: Insert after display name link
   const displayNameLink = container.querySelector('a[href^="/"]');
   if (displayNameLink) {
     const displayContainer = displayNameLink.closest('div');
     if (displayContainer?.parentNode) {
-      try {
-        displayContainer.parentNode.insertBefore(badge, displayContainer.nextSibling);
-        return true;
-      } catch (e) { /* continue */ }
+      try { displayContainer.parentNode.insertBefore(badge, displayContainer.nextSibling); return true; } catch { /* continue */ }
     }
   }
   
-  // Strategy 5: Fallback - append to container
-  try {
-    container.appendChild(badge);
-    return true;
-  } catch (e) {
-    return false;
-  }
+  try { container.appendChild(badge); return true; } catch { return false; }
 }
 
-/**
- * Apply bot UI to a reply element
- * @param {HTMLElement} replyElement - The reply element
- * @param {Object} verdict - Bot verdict (should contain username)
- * @param {string} [username] - Optional override for username
- */
+// ============================================================================
+// Optimistic UI Updates
+// ============================================================================
+
+// Show immediate skeleton while waiting for server
+function showPending(replyElement, username) {
+  const container = getReplyContainer(replyElement);
+  if (!container) return;
+  
+  // Skip if already has UI
+  if (container.querySelector('[data-bot-badge], [data-bot-skeleton]')) return;
+  
+  const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+  if (userNameContainer) {
+    const skeleton = createSkeleton();
+    insertBotBadge(userNameContainer, skeleton, username);
+  }
+  
+  container.dataset.botUsername = username?.toLowerCase() || '';
+}
+
+// Transition from skeleton to final verdict
+function resolvePending(replyElement, verdict, username) {
+  const container = getReplyContainer(replyElement);
+  if (!container) return;
+  
+  // Remove skeleton
+  const skeleton = container.querySelector('[data-bot-skeleton]');
+  if (skeleton) skeleton.remove();
+  
+  // Apply final verdict
+  applyBotUI(replyElement, verdict, username);
+}
+
+// ============================================================================
+// Main Apply Function
+// ============================================================================
+
 function applyBotUI(replyElement, verdict, username) {
   const container = getReplyContainer(replyElement);
   if (!container) return;
   
-  // Get username from verdict or parameter
   const resolvedUsername = username || verdict?.username || '';
   
-  // Skip if already processed with same verdict
+  // Skip if same verdict
   const existingVerdict = container.dataset.botVerdict;
   if (existingVerdict === JSON.stringify(verdict)) return;
   
-  // Remove any existing bot UI
+  // Remove any existing UI
   removeBotUI(container);
   
   // Store verdict
   container.dataset.botVerdict = JSON.stringify(verdict);
-  container.dataset.botUsername = resolvedUsername;
+  container.dataset.botUsername = resolvedUsername.toLowerCase();
   
-  // Skip if not a bot
-  if (!verdict.isBot && verdict.isBot !== 'pending') return;
+  // Not a bot - optionally show subtle indicator
+  if (!verdict.isBot && verdict.isBot !== 'pending') {
+    // Uncomment to show green dot for verified humans:
+    // const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+    // if (userNameContainer) insertBotBadge(userNameContainer, createCheckedDot(), resolvedUsername);
+    return;
+  }
   
   const confidence = verdict.confidence || 0;
   const severity = getSeverityLevel(confidence);
   
-  // Find the User-Name container (MUST match content.js flag logic exactly)
-  // content.js uses: '[data-testid="UserName"], [data-testid="User-Name"]'
+  // Add badge
   const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   if (userNameContainer) {
-    const badge = createBotBadge(verdict);
-    const inserted = insertBotBadge(userNameContainer, badge, resolvedUsername);
-    if (inserted) {
-      console.log('BotUI: Badge inserted for', resolvedUsername, '- parent:', badge.parentElement?.tagName);
-    } else {
-      console.warn('BotUI: Failed to insert badge for', resolvedUsername);
-    }
-  } else {
-    console.warn('BotUI: No User-Name container found for', resolvedUsername);
+    const badge = createBotBadge(verdict, true);
+    insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
   
-  // Add colored left border to make bots visually distinct
+  // Add colored border
   if (verdict.isBot === true) {
     if (severity === 'high') {
       container.classList.add('bot-reply-flagged');
@@ -415,60 +485,39 @@ function applyBotUI(replyElement, verdict, username) {
     }
   }
   
-  // Apply dimming for high-confidence bots (not pending)
-  if (verdict.isBot === true && confidence >= 0.75) {
+  // Dim high-confidence bots
+  if (verdict.isBot === true && confidence >= 0.7) {
     container.classList.add('bot-reply-dimmed');
-    container.classList.add('bot-reply-container');
     addQuickActions(container, resolvedUsername);
     
-    // Click anywhere on dimmed reply to reveal
     container.addEventListener('click', function revealHandler(e) {
-      // Don't trigger on button clicks
       if (e.target.closest('.bot-action-btn')) return;
       
       container.classList.remove('bot-reply-dimmed');
       container.removeEventListener('click', revealHandler);
       
-      // Add "Hide again" button next to badge
       const badge = container.querySelector('[data-bot-badge]');
-      if (badge && badge.parentElement) {
-        const hideBtn = createHideAgainButton(container, verdict, resolvedUsername);
-        badge.parentElement.insertBefore(hideBtn, badge.nextSibling);
+      if (badge?.parentElement) {
+        badge.parentElement.insertBefore(createHideAgainButton(container), badge.nextSibling);
       }
     });
   }
 }
 
-/**
- * Remove bot UI from an element
- */
 function removeBotUI(container) {
-  // Remove badge
-  const badge = container.querySelector('[data-bot-badge]');
-  if (badge) badge.remove();
+  container.querySelector('[data-bot-badge]')?.remove();
+  container.querySelector('[data-bot-hide-btn]')?.remove();
+  container.querySelector('[data-bot-skeleton]')?.remove();
+  container.querySelector('[data-bot-checked]')?.remove();
+  container.querySelector('.bot-actions')?.remove();
   
-  // Remove hide button
-  const hideBtn = container.querySelector('[data-bot-hide-btn]');
-  if (hideBtn) hideBtn.remove();
-  
-  // Remove all bot classes
   container.classList.remove(
-    'bot-reply-dimmed',
-    'bot-reply-container',
-    'bot-reply-flagged',
-    'bot-reply-flagged-medium'
+    'bot-reply-dimmed', 'bot-reply-container',
+    'bot-reply-flagged', 'bot-reply-flagged-medium'
   );
   
-  // Remove actions
-  const actions = container.querySelector('.bot-actions');
-  if (actions) actions.remove();
-  
-  // Remove inline styles we may have added
   container.style.removeProperty('position');
-  
-  // Remove data attributes
   delete container.dataset.botVerdict;
-  delete container.dataset.botUsername;
 }
 
 // ============================================================================
@@ -476,134 +525,115 @@ function removeBotUI(container) {
 // ============================================================================
 
 function addQuickActions(container, username) {
+  container.querySelector('.bot-actions')?.remove();
+  
   const actions = document.createElement('div');
   actions.className = 'bot-actions';
   
-  // Whitelist button
   const whitelistBtn = document.createElement('button');
   whitelistBtn.className = 'bot-action-btn bot-action-whitelist';
-  whitelistBtn.textContent = '✓ Not a bot';
-  whitelistBtn.title = 'Add to whitelist';
+  whitelistBtn.textContent = '✓ Human';
+  whitelistBtn.title = `Whitelist @${username}`;
   whitelistBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    if (window.BotCache) {
-      window.BotCache.addToWhitelist(username);
-    }
+    e.preventDefault();
+    window.BotCache?.addToWhitelist?.(username);
     removeBotUI(container);
+    showToast(`@${username} whitelisted`);
+    
+    // Update all instances
+    document.querySelectorAll(`[data-bot-username="${username.toLowerCase()}"]`).forEach(el => {
+      removeBotUI(el);
+      el.dataset.botProcessed = 'whitelisted';
+    });
+    container.dataset.botProcessed = 'whitelisted';
   });
   
-  // Block button (uses Twitter's native block)
   const blockBtn = document.createElement('button');
   blockBtn.className = 'bot-action-btn bot-action-block';
   blockBtn.textContent = '🚫 Block';
-  blockBtn.title = 'Block this account';
+  blockBtn.title = `Block @${username}`;
   blockBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    // Find and click Twitter's more menu, then block
+    e.preventDefault();
     const moreBtn = container.querySelector('[data-testid="caret"]');
     if (moreBtn) {
       moreBtn.click();
-      // Wait for menu to open, then click block
       setTimeout(() => {
-        const blockOption = document.querySelector('[data-testid="block"]');
-        if (blockOption) blockOption.click();
+        document.querySelector('[data-testid="block"]')?.click();
       }, 100);
     }
   });
   
   actions.appendChild(whitelistBtn);
   actions.appendChild(blockBtn);
-  container.appendChild(actions);
+  
+  container.style.position = 'relative';
+  container.insertBefore(actions, container.firstChild);
 }
 
 // ============================================================================
-// Update Pending to Final
+// Batch Update
 // ============================================================================
 
 function updateBotVerdict(username, verdict) {
-  // Find all containers with this username that are pending
-  const containers = document.querySelectorAll(`[data-bot-username="${username}"]`);
-  
-  containers.forEach(container => {
+  document.querySelectorAll(`[data-bot-username="${username.toLowerCase()}"]`).forEach(container => {
     try {
-      const currentVerdict = JSON.parse(container.dataset.botVerdict || '{}');
-      if (currentVerdict.isBot === 'pending') {
+      const current = JSON.parse(container.dataset.botVerdict || '{}');
+      if (current.isBot === 'pending') {
         applyBotUI(container, verdict, username);
       }
-    } catch (e) {
-      // Ignore parse errors
-    }
+    } catch { /* ignore */ }
   });
 }
 
-// ============================================================================
-// Remove All Bot UI
-// ============================================================================
-
 function removeAllBotUI() {
-  // Remove all badges and hide buttons
-  document.querySelectorAll('[data-bot-badge], [data-bot-hide-btn]').forEach(el => el.remove());
-  
-  // Remove all bot classes
+  document.querySelectorAll('[data-bot-badge], [data-bot-hide-btn], [data-bot-skeleton], [data-bot-checked], .bot-actions').forEach(el => el.remove());
   document.querySelectorAll('.bot-reply-dimmed, .bot-reply-container, .bot-reply-flagged, .bot-reply-flagged-medium').forEach(el => {
     el.classList.remove('bot-reply-dimmed', 'bot-reply-container', 'bot-reply-flagged', 'bot-reply-flagged-medium');
   });
-  
-  // Remove all actions
-  document.querySelectorAll('.bot-actions').forEach(el => el.remove());
-  
-  // Remove all data attributes
   document.querySelectorAll('[data-bot-verdict]').forEach(el => {
     delete el.dataset.botVerdict;
     delete el.dataset.botUsername;
   });
 }
 
-// ============================================================================
-// Initialize
-// ============================================================================
-
 function initBotUI() {
   injectBotStyles();
 }
 
-// ============================================================================
-// Debug: Test UI on any tweet (call from console)
-// Usage: BotUI.testOnTweet() or BotUI.testOnTweet('high') or BotUI.testOnTweet('medium')
-// ============================================================================
-
+// Debug
 function testOnTweet(severity = 'high') {
   const tweet = document.querySelector('article[data-testid="tweet"]:not([data-bot-verdict])');
-  if (!tweet) {
-    console.log('No unprocessed tweets found');
-    return;
-  }
+  if (!tweet) { console.log('No unprocessed tweets'); return; }
   
   const verdict = {
-    username: 'test_bot_' + Date.now(),
+    username: 'test_bot',
     isBot: true,
     confidence: severity === 'high' ? 0.92 : 0.65,
     category: 'crypto_spam',
-    reason: 'DEBUG: Testing bot UI overlay',
-    source: 'debug',
-    expiry: Date.now() + 60000 // 1 minute
+    reason: 'Test verdict',
+    source: 'debug'
   };
   
   applyBotUI(tweet, verdict);
-  console.log(`✅ Applied ${severity} bot UI to tweet. Verdict:`, verdict);
+  console.log('Applied', severity, 'verdict');
 }
 
 // Export
 if (typeof window !== 'undefined') {
   window.BotUI = {
     initBotUI,
-    injectBotStyles,  // CRITICAL: Must be exported for content.js to call it
+    injectBotStyles,
     applyBotUI,
     removeBotUI,
     updateBotVerdict,
     removeAllBotUI,
     createBotBadge,
-    testOnTweet,  // Debug function
+    showPending,
+    resolvePending,
+    showToast,
+    testOnTweet,
     CATEGORY_LABELS,
   };
 }

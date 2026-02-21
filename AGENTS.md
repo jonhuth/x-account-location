@@ -1,145 +1,159 @@
-.# X Account Tools - AGENTS.md
+# X Account Tools - AGENTS.md
 
 Chrome extension for bot detection, location flags, and tools on X/Twitter.
 
-## Architecture
+## Architecture (v2)
 
 ```
 x-account-location/
 ├── manifest.json          # MV3 extension manifest
 ├── popup.html/js          # Extension popup UI (tabs: Bot Detection, Location, Tools)
 ├── content.js             # Main content script - coordinates all features
-├── pageScript.js          # Injected page script - accesses Twitter internal APIs
+├── pageScript.js          # Injected page script - location API only
 ├── countryFlags.js        # Country name to flag emoji mapping
-├── botDetection.js        # Local heuristics engine (score 0-100)
-├── botLegitimacy.js       # User following list for legitimacy signals
-├── botCache.js            # Multi-tier caching, batching, circuit breaker
-├── botUI.js               # Bot detection UI (badges, dimming, overlays)
-└── backend/               # Bun/Hono server for AI classification
+├── botDetection.js        # Minimal local checks (DOM extraction, should-classify logic)
+├── botCache.js            # Caching, batching, circuit breaker, timeout/retry
+├── botUI.js               # Bot detection UI (badges, dimming, quick actions)
+└── backend/               # Bun/Hono server - ALL bot classification via AI
     └── src/
-        ├── index.ts       # Server entry point with CORS, rate limiting
-        ├── routes/        # API endpoints
-        └── lib/           # Anthropic client, prompts, cache
+        ├── index.ts       # Server with CORS, per-endpoint rate limiting
+        ├── routes/        # /classify (batch), /lookup (single)
+        └── lib/           # Anthropic client, system prompt, response parsing
 ```
 
-## Key Components
+## Key Design Decisions
 
-### Bot Detection Flow
-1. `MutationObserver` detects new tweets in DOM
-2. `processBotDetection()` in content.js orchestrates:
-   - Check whitelist → skip if whitelisted
-   - Check cache → apply verdict if cached
-   - Extract data → `extractReplyData()` gets username, text, avatar, verified
-   - Run heuristics → `calculateBotScore()` in botDetection.js
-   - Action based on score: `dim` (local bot), `ai` (uncertain), `none` (likely human)
-3. For `ai` action: queue to backend via `botCache.js`
-4. Apply UI via `botUI.js`
+### Server-Side Classification
+**All scoring happens on the server** via Claude Haiku. Client only:
+1. Extracts DOM data (username, display name, reply text, avatar, verified)
+2. Checks whitelist/cache
+3. Sends to server for AI classification
 
-### Script Communication
-- `content.js` ↔ `pageScript.js`: `window.postMessage()` with type prefixes
-  - `__fetchLocation` / `__locationResponse`: Location API
-  - `__fetchFollowing` / `__followingResponse`: Following list API
+This avoids:
+- Client-side performance issues from complex pattern matching
+- Fragile regex/heuristic maintenance
+- Hammering Twitter's DOM with excessive processing
+
+### Performance Optimizations
+- **Debounced observers**: 300ms mutation, 500ms scroll
+- **Throttled processing**: 2s minimum between bot batches
+- **Batching**: Up to 5 replies per API call
+- **Circuit breaker**: Backs off exponentially on errors
+- **Request timeout**: 8s with automatic retry
+- **System prompt caching**: Static categories in Anthropic system prompt
+
+### Rate Limits (Backend)
+- Global: 100 requests/min per IP
+- Classify: 30 batch requests/min per IP
+- Lookup: 20 requests/min per IP
+
+## Bot Detection Flow
+
+```
+1. MutationObserver detects new tweets
+2. scheduleBotProcessing() throttles (2s interval)
+3. processBotDetectionBatch() filters visible tweets
+4. For each tweet:
+   a. Check whitelist → skip
+   b. Check cache → apply verdict if cached
+   c. Extract DOM data → extractReplyData()
+   d. Quick local check → shouldClassify() (only skips verified/followed)
+   e. Queue for server → queueForClassification()
+5. Server batches replies, classifies via AI
+6. Apply UI → applyBotUI() (badge, dimming, actions)
+```
+
+## Script Communication
+
+- `content.js` ↔ `pageScript.js`: `window.postMessage()` for location API only
 - `content.js` ↔ `popup.js`: `chrome.runtime.onMessage`
+- `content.js` ↔ `backend`: fetch with timeout/retry
 
-### Caching Strategy
-- **In-memory**: Fastest, lost on page reload
-- **chrome.storage.local**: Persists across sessions
-  - Location cache: 30 days (1 day for null)
-  - Bot verdicts: 7 days
-  - Following list: 24 hours
-- **Backend LRU**: 1 hour TTL, prevents duplicate AI calls
+## Caching
+
+| Cache | TTL | Purpose |
+|-------|-----|---------|
+| Bot verdicts (memory) | Session | Fast re-lookup |
+| Bot verdicts (storage) | 7 days | Persist across sessions |
+| Whitelist (storage) | Permanent | User overrides |
+| Location cache | 30 days | Avoid API spam |
+| Backend LRU | 1 hour | Dedup AI calls |
 
 ## Code Style
 
-### Defensive Coding (CRITICAL)
-
-**`X is not a function` errors occur when calling methods on values:** `value.method()`
+### Defensive Coding
 
 ```javascript
-// Bad                          // Good
-text.toLowerCase()              String(text || '').toLowerCase()
-data.map(fn)                    (Array.isArray(data) ? data : []).map(fn)
-obj.property                    obj?.property
+// BAD - assumes types
+text.toLowerCase()
+data.map(fn)
+
+// GOOD - defensive
+String(text || '').toLowerCase()
+(Array.isArray(data) ? data : []).map(fn)
+obj?.property ?? defaultValue
 ```
 
-**External data is never trustworthy** — DOM extraction, Twitter API responses, message passing, popup input.
+### Extension Context
+```javascript
+// Check before storage ops
+if (!chrome.runtime?.id) return;
 
-### JavaScript Conventions
-- Use `const` by default, `let` only when reassignment needed
-- Use optional chaining (`?.`) and nullish coalescing (`??`)
-- Avoid `var`
-
-### Chrome Extension Specifics
-- Check `chrome.runtime?.id` before storage operations (context invalidation)
-- Use `try/catch` around all `chrome.storage` calls
-- Clean up event listeners to avoid memory leaks
+// Wrap storage in try/catch
+try {
+  await chrome.storage.local.get(key);
+} catch (e) {
+  if (!e.message?.includes('Extension context invalidated')) throw e;
+}
+```
 
 ## Development
 
-### Testing the Extension
-1. Go to `chrome://extensions/`
-2. Enable "Developer mode"
-3. Click "Load unpacked" → select this directory
-4. Navigate to x.com and check console for logs
-5. After code changes: click refresh icon on extension card
+### Testing
+1. `chrome://extensions/` → Developer mode → Load unpacked
+2. Navigate to x.com
+3. After changes: click refresh icon on extension card
+4. Console: `window.debugShowTweets()` or `window.forceReprocessBots()`
 
-### Backend Commands
+### Backend
 ```bash
 cd backend
 bun install
-bun run dev      # Dev server on :3001
-bun run lint:fix # Biome lint + fix
+bun run dev      # Dev server on :3000
+bun run lint:fix # Biome
 ```
 
-### Environment Variables (Backend)
-```env
-ANTHROPIC_API_KEY=sk-ant-...
-PORT=3001  # Optional, defaults to 3001
-```
+Environment: `ANTHROPIC_API_KEY=sk-ant-...`
 
-## Debugging
-
-### Common Issues
-
-**"Following fetch timeout"**: Page script not ready
-- Check `pageScript.js` is being injected
-- Check console for header capture logs
-- May need to wait for Twitter to make API calls first
-
-**"X is not a function"**: Type mismatch
-- Check the function's input - is it what you expect?
-- Add defensive coercion at function entry
-- Log the actual value: `console.log(typeof val, val)`
-
-**Bot detection not running**: 
-- Check `botDetectionEnabled` in storage
-- Check console for initialization logs
-- Verify all scripts listed in manifest.json
-
-### Useful Console Commands
-```javascript
-// Check bot cache
-chrome.storage.local.get('bot_verdict_cache', console.log)
-
-// Check following cache
-chrome.storage.local.get('user_following_cache', console.log)
-
-// Check whitelist
-chrome.storage.local.get('bot_whitelist', console.log)
-
-// Force refresh following list
-window.BotLegitimacy?.loadUserFollowing(true)
-```
-
-## Backend Deployment
-
-Hosted on Railway: `https://x-bot-detector-production.up.railway.app`
-
+### Deployment
 ```bash
 cd backend
-railway login
-railway link --project x-bot-detector
 railway up
 ```
 
-Set `ANTHROPIC_API_KEY` in Railway dashboard.
+URL: `https://x-bot-detector-production.up.railway.app`
+
+## Debugging
+
+### Console Commands
+```javascript
+chrome.storage.local.get('bot_verdict_cache', console.log)
+chrome.storage.local.get('bot_whitelist', console.log)
+window.debugShowTweets()    // Show all tweets + status
+window.forceReprocessBots() // Reprocess all tweets
+```
+
+### Common Issues
+
+**Tweets not being classified**
+- Check `botDetectionEnabled` in storage
+- Check network tab for backend requests
+- Look for circuit breaker logs
+
+**"X is not a function"**
+- Add defensive type coercion
+- Log actual value: `console.log(typeof val, val)`
+
+**Backend 429**
+- Rate limit exceeded
+- Wait 60s or check per-endpoint limits
