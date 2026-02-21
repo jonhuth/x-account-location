@@ -384,14 +384,29 @@ function isUsernameLink(link, potentialUsername) {
 }
 
 function extractUsername(element) {
+  // First try UserName container (works for both OP and replies)
   const usernameElement = element.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   if (usernameElement) {
+    // Look for @username link pattern
+    for (const link of usernameElement.querySelectorAll('a[href^="/"]')) {
+      const href = link.getAttribute('href');
+      const username = parseUsernameFromLink(href);
+      if (username && isValidUsername(username)) {
+        // Prefer links that look like @username (not display names)
+        const text = link.textContent?.trim() || '';
+        if (text.startsWith('@') || text.toLowerCase() === username.toLowerCase()) {
+          return username;
+        }
+      }
+    }
+    // Second pass: any valid username link in UserName container
     for (const link of usernameElement.querySelectorAll('a[href^="/"]')) {
       const username = parseUsernameFromLink(link.getAttribute('href'));
       if (username && isValidUsername(username)) return username;
     }
   }
   
+  // Fallback: search all links
   const allLinks = element.querySelectorAll('a[href^="/"]');
   const seenUsernames = new Set();
   
@@ -404,6 +419,7 @@ function extractUsername(element) {
     if (parent && !username.includes('/')) return username;
   }
   
+  // Last resort: match @username pattern in text
   const textContent = element.textContent || '';
   for (const match of textContent.matchAll(/@([a-zA-Z0-9_]+)/g)) {
     const username = match[1];
@@ -745,8 +761,14 @@ function scheduleBotProcessing() {
 async function processBotDetectionBatch() {
   if (!botDetectionEnabled) return;
   
+  // Select ALL tweet articles - this includes OP and all replies
   const unprocessed = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
   if (unprocessed.length === 0) return;
+  
+  // Debug: log what we found
+  if (unprocessed.length > 0) {
+    console.log(`BotDetection: Found ${unprocessed.length} unprocessed tweets`);
+  }
   
   // Only process visible + near-visible tweets
   const visible = Array.from(unprocessed).filter(el => {
@@ -786,7 +808,8 @@ async function processBotDetection(el) {
   // Cache check - apply immediately if cached
   const cached = window.BotCache?.getCachedVerdict?.(username);
   if (cached) {
-    if (cached.isBot) window.BotUI?.applyBotUI?.(el, cached);
+    // Apply UI for BOTH humans and bots (show scores)
+    window.BotUI?.applyBotUI?.(el, cached, username);
     el.dataset.botProcessed = cached.isBot ? 'bot' : 'human';
     return;
   }
@@ -812,7 +835,7 @@ async function processBotDetection(el) {
   
   try {
     const verdict = await window.BotCache?.queueForClassification?.(username, replyData);
-    // Resolve: replace skeleton with final verdict
+    // Resolve: replace skeleton with final verdict (show for BOTH humans and bots)
     window.BotUI?.resolvePending?.(el, verdict, username);
     el.dataset.botProcessed = verdict?.isBot ? 'bot' : 'human';
   } catch {

@@ -54,6 +54,12 @@ const BOT_UI_STYLES = `
   color: #e5e5e5;
 }
 
+/* Human - Green */
+.bot-badge-human {
+  background: #166534;
+  color: #dcfce7;
+}
+
 /* Pending analysis - subtle shimmer */
 .bot-badge-pending {
   background: linear-gradient(90deg, #27272a 0%, #3f3f46 50%, #27272a 100%);
@@ -274,32 +280,47 @@ function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
   
+  const confidence = verdict.confidence || 0;
+  const pct = Math.round(confidence * 100);
   let severity = 'pending';
   let text = '•••';
   let title = 'Analyzing...';
+  let bgColor, fgColor;
   
   if (verdict.isBot === 'pending') {
     severity = 'pending';
     text = '•••';
     title = 'Analyzing...';
+    bgColor = '#374151';
+    fgColor = '#9ca3af';
   } else if (verdict.isBot) {
-    const confidence = verdict.confidence || 0;
     severity = getSeverityLevel(confidence);
     
     if (severity === 'high') {
-      text = '🤖 BOT';
+      text = `🤖 ${pct}%`;
+      bgColor = '#dc2626';
+      fgColor = '#ffffff';
     } else if (severity === 'medium') {
-      text = '⚠️ SUS';
+      text = `⚠️ ${pct}%`;
+      bgColor = '#f59e0b';
+      fgColor = '#000000';
     } else {
-      text = '? LOW';
+      text = `? ${pct}%`;
+      bgColor = '#525252';
+      fgColor = '#ffffff';
     }
     
     const category = CATEGORY_LABELS[verdict.category] || 'Bot';
-    const pct = Math.round(confidence * 100);
-    title = `${pct}% · ${category}\n${verdict.reason || ''}`;
+    title = `Bot: ${pct}% · ${category}\n${verdict.reason || ''}`;
+  } else {
+    // Human - show green with inverse probability
+    severity = 'human';
+    const humanPct = 100 - pct;
+    text = `✓ ${humanPct}%`;
+    bgColor = '#166534'; // Dark green
+    fgColor = '#dcfce7'; // Light green text
+    title = `Human: ${humanPct}% confidence`;
   }
-  
-  const colors = BADGE_COLORS[severity];
   
   Object.assign(badge.style, {
     display: 'inline-flex',
@@ -313,8 +334,8 @@ function createBotBadge(verdict, animate = true) {
     cursor: 'pointer',
     userSelect: 'none',
     whiteSpace: 'nowrap',
-    backgroundColor: colors.bg,
-    color: colors.fg,
+    backgroundColor: bgColor,
+    color: fgColor,
     lineHeight: '1.3'
   });
   
@@ -445,7 +466,17 @@ function applyBotUI(replyElement, verdict, username) {
   const container = getReplyContainer(replyElement);
   if (!container) return;
   
-  const resolvedUsername = username || verdict?.username || '';
+  // Extract username from DOM if not provided
+  let resolvedUsername = username || verdict?.username || '';
+  if (!resolvedUsername) {
+    // Try to extract from the container
+    const usernameLink = container.querySelector('[data-testid="UserName"] a[href^="/"], [data-testid="User-Name"] a[href^="/"]');
+    if (usernameLink) {
+      const href = usernameLink.getAttribute('href');
+      const match = href?.match(/^\/([^\/\?]+)/);
+      if (match?.[1]) resolvedUsername = match[1];
+    }
+  }
   
   // Skip if same verdict
   const existingVerdict = container.dataset.botVerdict;
@@ -458,49 +489,43 @@ function applyBotUI(replyElement, verdict, username) {
   container.dataset.botVerdict = JSON.stringify(verdict);
   container.dataset.botUsername = resolvedUsername.toLowerCase();
   
-  // Not a bot - optionally show subtle indicator
-  if (!verdict.isBot && verdict.isBot !== 'pending') {
-    // Uncomment to show green dot for verified humans:
-    // const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
-    // if (userNameContainer) insertBotBadge(userNameContainer, createCheckedDot(), resolvedUsername);
-    return;
-  }
-  
   const confidence = verdict.confidence || 0;
-  const severity = getSeverityLevel(confidence);
-  
-  // Add badge
   const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+  
+  // ALWAYS show a score badge (human or bot)
   if (userNameContainer) {
     const badge = createBotBadge(verdict, true);
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
   
-  // Add colored border
+  // Additional styling for bots
   if (verdict.isBot === true) {
+    const severity = getSeverityLevel(confidence);
+    
+    // Add colored border
     if (severity === 'high') {
       container.classList.add('bot-reply-flagged');
     } else if (severity === 'medium') {
       container.classList.add('bot-reply-flagged-medium');
     }
-  }
-  
-  // Dim high-confidence bots
-  if (verdict.isBot === true && confidence >= 0.7) {
-    container.classList.add('bot-reply-dimmed');
-    addQuickActions(container, resolvedUsername);
     
-    container.addEventListener('click', function revealHandler(e) {
-      if (e.target.closest('.bot-action-btn')) return;
+    // Dim high-confidence bots
+    if (confidence >= 0.7) {
+      container.classList.add('bot-reply-dimmed');
+      addQuickActions(container, resolvedUsername);
       
-      container.classList.remove('bot-reply-dimmed');
-      container.removeEventListener('click', revealHandler);
-      
-      const badge = container.querySelector('[data-bot-badge]');
-      if (badge?.parentElement) {
-        badge.parentElement.insertBefore(createHideAgainButton(container), badge.nextSibling);
-      }
-    });
+      container.addEventListener('click', function revealHandler(e) {
+        if (e.target.closest('.bot-action-btn')) return;
+        
+        container.classList.remove('bot-reply-dimmed');
+        container.removeEventListener('click', revealHandler);
+        
+        const badge = container.querySelector('[data-bot-badge]');
+        if (badge?.parentElement) {
+          badge.parentElement.insertBefore(createHideAgainButton(container), badge.nextSibling);
+        }
+      });
+    }
   }
 }
 
@@ -527,22 +552,41 @@ function removeBotUI(container) {
 function addQuickActions(container, username) {
   container.querySelector('.bot-actions')?.remove();
   
+  // Ensure we have a username - extract from DOM if needed
+  let resolvedUsername = username;
+  if (!resolvedUsername) {
+    const usernameLink = container.querySelector('[data-testid="UserName"] a[href^="/"], [data-testid="User-Name"] a[href^="/"]');
+    if (usernameLink) {
+      const href = usernameLink.getAttribute('href');
+      const match = href?.match(/^\/([^\/\?]+)/);
+      if (match?.[1]) resolvedUsername = match[1];
+    }
+  }
+  
+  if (!resolvedUsername) {
+    console.warn('BotUI: Could not resolve username for quick actions');
+    return;
+  }
+  
   const actions = document.createElement('div');
   actions.className = 'bot-actions';
   
   const whitelistBtn = document.createElement('button');
   whitelistBtn.className = 'bot-action-btn bot-action-whitelist';
   whitelistBtn.textContent = '✓ Human';
-  whitelistBtn.title = `Whitelist @${username}`;
+  whitelistBtn.title = `Whitelist @${resolvedUsername}`;
   whitelistBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
-    window.BotCache?.addToWhitelist?.(username);
+    
+    console.log('BotUI: Whitelisting', resolvedUsername);
+    window.BotCache?.addToWhitelist?.(resolvedUsername);
     removeBotUI(container);
-    showToast(`@${username} whitelisted`);
+    showToast(`@${resolvedUsername} whitelisted`);
     
     // Update all instances
-    document.querySelectorAll(`[data-bot-username="${username.toLowerCase()}"]`).forEach(el => {
+    const lowerUsername = resolvedUsername.toLowerCase();
+    document.querySelectorAll(`[data-bot-username="${lowerUsername}"]`).forEach(el => {
       removeBotUI(el);
       el.dataset.botProcessed = 'whitelisted';
     });
@@ -552,7 +596,7 @@ function addQuickActions(container, username) {
   const blockBtn = document.createElement('button');
   blockBtn.className = 'bot-action-btn bot-action-block';
   blockBtn.textContent = '🚫 Block';
-  blockBtn.title = `Block @${username}`;
+  blockBtn.title = `Block @${resolvedUsername}`;
   blockBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
