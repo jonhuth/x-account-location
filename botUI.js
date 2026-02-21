@@ -276,23 +276,30 @@ const BADGE_COLORS = {
   pending: { bg: '#374151', fg: '#9ca3af' }
 };
 
+/**
+ * SCORING: confidence = how sure AI is about its classification
+ * - isBot=true, confidence=0.95 → 95% sure it's a bot
+ * - isBot=false, confidence=0.95 → 95% sure it's human
+ * 
+ * DISPLAY: Always show confidence with clear bot/human label
+ */
+
 function buildTooltip(verdict) {
-  const botProb = verdict.confidence || 0;
-  const pct = Math.round(botProb * 100);
+  const conf = Math.round((verdict.confidence || 0) * 100);
   const lines = [];
   
-  // Header
+  // Header - clear labeling
   if (verdict.isBot) {
-    lines.push(`🤖 ${pct}% Bot Probability`);
+    lines.push(`🤖 ${conf}% confidence this is a BOT`);
   } else {
-    lines.push(`✓ ${pct}% Bot Probability (Likely Human)`);
+    lines.push(`✓ ${conf}% confidence this is HUMAN`);
   }
-  lines.push('─'.repeat(28));
+  lines.push('─'.repeat(32));
   
-  // Category
-  if (verdict.category && verdict.category !== 'genuine') {
+  // Category (for bots)
+  if (verdict.isBot && verdict.category && verdict.category !== 'genuine') {
     const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
-    lines.push(`Category: ${categoryLabel}`);
+    lines.push(`Type: ${categoryLabel}`);
   }
   
   // Reason from AI
@@ -300,20 +307,13 @@ function buildTooltip(verdict) {
     lines.push(`Reason: ${verdict.reason}`);
   }
   
-  // Signals breakdown (if provided by server)
+  // Signals breakdown
   if (verdict.signals && verdict.signals.length > 0) {
     lines.push('');
-    lines.push('Signals detected:');
+    lines.push('Signals:');
     verdict.signals.forEach(signal => {
-      const icon = signal.startsWith('+') || signal.includes('spam') || signal.includes('bot') ? '⚠️' : '✓';
-      lines.push(`  ${icon} ${signal}`);
+      lines.push(`  • ${signal}`);
     });
-  }
-  
-  // Source info
-  if (verdict.source) {
-    lines.push('');
-    lines.push(`Source: ${verdict.source === 'ai' ? 'AI Analysis' : verdict.source}`);
   }
   
   return lines.join('\n');
@@ -323,9 +323,7 @@ function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
   
-  // confidence = bot probability (0-1)
-  const botProb = verdict.confidence || 0;
-  const pct = Math.round(botProb * 100);
+  const conf = Math.round((verdict.confidence || 0) * 100);
   let severity = 'pending';
   let text = '•••';
   let title = 'Analyzing...';
@@ -338,30 +336,30 @@ function createBotBadge(verdict, animate = true) {
     bgColor = '#374151';
     fgColor = '#9ca3af';
   } else if (verdict.isBot) {
-    // BOT - show bot probability (high = bad)
-    severity = getSeverityLevel(botProb);
+    // BOT - red/amber based on confidence
+    severity = getSeverityLevel(verdict.confidence || 0);
     
     if (severity === 'high') {
-      text = `🤖 ${pct}%`;
-      bgColor = '#dc2626'; // Red
+      text = `🤖${conf}%`;  // High confidence bot
+      bgColor = '#dc2626';
       fgColor = '#ffffff';
     } else if (severity === 'medium') {
-      text = `⚠️ ${pct}%`;
-      bgColor = '#f59e0b'; // Amber
+      text = `⚠️${conf}%`;  // Medium confidence bot
+      bgColor = '#f59e0b';
       fgColor = '#000000';
     } else {
-      text = `? ${pct}%`;
-      bgColor = '#525252'; // Gray
+      text = `?${conf}%`;   // Low confidence bot
+      bgColor = '#525252';
       fgColor = '#ffffff';
     }
     
     title = buildTooltip(verdict);
   } else {
-    // HUMAN - show bot probability (low = good)
+    // HUMAN - green, show confidence
     severity = 'human';
-    text = `✓ ${pct}%`;
-    bgColor = '#166534'; // Dark green
-    fgColor = '#dcfce7'; // Light green text
+    text = `✓${conf}%`;
+    bgColor = '#166534';
+    fgColor = '#dcfce7';
     title = buildTooltip(verdict);
   }
   
@@ -440,7 +438,9 @@ function findHandleSection(container, screenName) {
 }
 
 function insertBotBadge(container, badge, screenName) {
-  // PRIORITY 1: After country flag if exists (keeps flag + badge together)
+  // Layout goal: [DisplayName] [Flag] [BotBadge] [@handle] [time]
+  
+  // PRIORITY 1: After existing flag (keeps flag + badge together)
   const existingFlag = container.querySelector('[data-twitter-flag]');
   if (existingFlag) {
     try { 
@@ -449,7 +449,7 @@ function insertBotBadge(container, badge, screenName) {
     } catch { /* continue */ }
   }
   
-  // PRIORITY 2: After flag shimmer (loading state for flag)
+  // PRIORITY 2: After flag shimmer (flag is loading)
   const flagShimmer = container.querySelector('[data-twitter-flag-shimmer]');
   if (flagShimmer) {
     try { 
@@ -458,27 +458,30 @@ function insertBotBadge(container, badge, screenName) {
     } catch { /* continue */ }
   }
   
-  // PRIORITY 3: Before @handle section
+  // PRIORITY 3: Before @handle section (flag not present yet)
+  // Note: When flag arrives later, it inserts before @handle too, so order becomes: [Flag] [Badge] [@handle]
+  // This is close enough - both are before @handle
   const handleSection = findHandleSection(container, screenName);
-  
-  if (handleSection && handleSection.parentNode === container) {
-    try { container.insertBefore(badge, handleSection); return true; } catch { /* continue */ }
-  }
-  
-  if (handleSection?.parentNode && handleSection.parentNode !== container) {
-    try { handleSection.parentNode.insertBefore(badge, handleSection); return true; } catch { /* continue */ }
-  }
-  
-  // PRIORITY 4: After display name
-  const displayNameLink = container.querySelector('a[href^="/"]');
-  if (displayNameLink) {
-    const displayContainer = displayNameLink.closest('div');
-    if (displayContainer?.parentNode) {
-      try { displayContainer.parentNode.insertBefore(badge, displayContainer.nextSibling); return true; } catch { /* continue */ }
+  if (handleSection) {
+    const parent = handleSection.parentNode;
+    if (parent) {
+      try { 
+        parent.insertBefore(badge, handleSection); 
+        return true; 
+      } catch { /* continue */ }
     }
   }
   
-  // FALLBACK: Append
+  // PRIORITY 4: After first link (display name)
+  const firstLink = container.querySelector('a[href^="/"]');
+  if (firstLink) {
+    try {
+      firstLink.after(badge);
+      return true;
+    } catch { /* continue */ }
+  }
+  
+  // FALLBACK: Append to end
   try { container.appendChild(badge); return true; } catch { return false; }
 }
 

@@ -438,24 +438,48 @@ function findHandleSection(container, screenName) {
 }
 
 function insertFlagElement(container, flagSpan, screenName) {
+  // Layout goal: [DisplayName] [Flag] [BotBadge] [@handle] [time]
+  
+  // PRIORITY 1: Before existing bot badge (so flag comes first)
+  const existingBotBadge = container.querySelector('[data-bot-badge]');
+  if (existingBotBadge) {
+    try { 
+      existingBotBadge.before(flagSpan); 
+      return true; 
+    } catch { /* continue */ }
+  }
+  
+  // PRIORITY 2: Before bot skeleton (loading state)
+  const botSkeleton = container.querySelector('[data-bot-skeleton]');
+  if (botSkeleton) {
+    try { 
+      botSkeleton.before(flagSpan); 
+      return true; 
+    } catch { /* continue */ }
+  }
+  
+  // PRIORITY 3: Before @handle section
   const handleSection = findHandleSection(container, screenName);
-  
-  if (handleSection && handleSection.parentNode === container) {
-    try { container.insertBefore(flagSpan, handleSection); return true; } catch { /* continue */ }
-  }
-  
-  if (handleSection?.parentNode && handleSection.parentNode !== container) {
-    try { handleSection.parentNode.insertBefore(flagSpan, handleSection); return true; } catch { /* continue */ }
-  }
-  
-  const displayNameLink = container.querySelector('a[href^="/"]');
-  if (displayNameLink) {
-    const displayContainer = displayNameLink.closest('div');
-    if (displayContainer?.parentNode) {
-      try { displayContainer.parentNode.insertBefore(flagSpan, displayContainer.nextSibling); return true; } catch { /* continue */ }
+  if (handleSection) {
+    const parent = handleSection.parentNode;
+    if (parent) {
+      try { 
+        parent.insertBefore(flagSpan, handleSection); 
+        return true; 
+      } catch { /* continue */ }
     }
   }
   
+  // PRIORITY 4: After display name link
+  const displayNameLink = container.querySelector('a[href^="/"]');
+  if (displayNameLink) {
+    try {
+      displayNameLink.after(flagSpan);
+      return true;
+    } catch { /* continue */ }
+  }
+  
+  // FALLBACK: Append
   try { container.appendChild(flagSpan); return true; } catch { return false; }
 }
 
