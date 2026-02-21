@@ -992,25 +992,35 @@ async function init() {
   await loadStats();
   await checkStorageUsage();
   
+  // Early return only if BOTH features are disabled
   if (!extensionEnabled && !botDetectionEnabled) return;
   
-  injectPageScript();
-  await new Promise(resolve => setTimeout(resolve, 500));
+  // pageScript is needed for location data - only inject if location is enabled
+  if (extensionEnabled) {
+    injectPageScript();
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
   
+  // Bot detection setup (independent of location)
   if (botDetectionEnabled) {
     window.BotUI?.injectBotStyles?.();
     await window.BotCache?.loadBotCache?.();
     await window.BotCache?.loadWhitelist?.();
   }
   
+  // Setup observers - they internally check each feature's enabled state
   setupObservers();
   
+  // Start processing - each function checks its own enabled state
   setTimeout(() => {
-    processUsernamesThrottled();
+    if (extensionEnabled) processUsernamesThrottled();
     if (botDetectionEnabled) scheduleBotProcessing();
   }, INIT_DELAY);
   
-  setInterval(saveCache, CACHE_PERIODIC_SAVE);
+  // Location cache periodic save
+  if (extensionEnabled) {
+    setInterval(saveCache, CACHE_PERIODIC_SAVE);
+  }
 }
 
 if (document.readyState === 'loading') {
