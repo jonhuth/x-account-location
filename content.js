@@ -712,11 +712,13 @@ function setupObservers() {
       if (typeof requestIdleCallback !== 'undefined') {
         requestIdleCallback(() => {
           scrollPending = false;
+          if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
         }, { timeout: 200 });
       } else {
         setTimeout(() => {
           scrollPending = false;
+          if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
         }, 150);
       }
@@ -765,21 +767,16 @@ async function processBotDetectionBatch() {
   const unprocessed = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
   if (unprocessed.length === 0) return;
   
-  // Debug: log what we found
-  if (unprocessed.length > 0) {
-    console.log(`BotDetection: Found ${unprocessed.length} unprocessed tweets`);
-  }
-  
   // Only process visible + near-visible tweets
   const visible = Array.from(unprocessed).filter(el => {
     const rect = el.getBoundingClientRect();
     return rect.top < window.innerHeight + 300 && rect.bottom > -100;
   });
   
-  // Process more tweets per batch for snappier feel
-  const batch = visible.slice(0, 8);
+  if (visible.length === 0) return;
   
-  // Fire off all requests in parallel (don't await sequentially)
+  // Process tweets in parallel
+  const batch = visible.slice(0, 8);
   const promises = batch.map(el => processBotDetection(el));
   await Promise.allSettled(promises);
   
@@ -790,7 +787,10 @@ async function processBotDetectionBatch() {
 }
 
 async function processBotDetection(el) {
-  if (!botDetectionEnabled || el.dataset.botProcessed) return;
+  if (!botDetectionEnabled) return;
+  // Allow reprocessing of errored tweets
+  const status = el.dataset.botProcessed;
+  if (status && status !== 'error') return;
   el.dataset.botProcessed = 'processing';
   
   const username = extractUsername(el);
@@ -896,15 +896,31 @@ window.forceReprocessBots = async function() {
   console.log('Done!');
 };
 
+window.forceReprocessFlags = async function() {
+  const containers = document.querySelectorAll('article[data-testid="tweet"]');
+  console.log(`Reprocessing ${containers.length} containers for flags...`);
+  containers.forEach(el => delete el.dataset.flagAdded);
+  await processVisibleUsernames(Array.from(containers));
+  console.log('Done!');
+};
+
 window.debugShowTweets = function() {
   const allTweets = document.querySelectorAll('article[data-testid="tweet"]');
   const data = Array.from(allTweets).map(el => ({
     username: extractUsername(el),
-    processed: el.dataset.botProcessed,
-    text: el.querySelector('[data-testid="tweetText"]')?.textContent?.slice(0, 40)
+    botStatus: el.dataset.botProcessed || 'none',
+    flagStatus: el.dataset.flagAdded || 'none',
+    hasFlag: !!el.querySelector('[data-twitter-flag]'),
+    hasBotBadge: !!el.querySelector('[data-bot-badge]'),
+    text: el.querySelector('[data-testid="tweetText"]')?.textContent?.slice(0, 30)
   }));
   console.table(data);
   return data;
+};
+
+window.debugBotCache = function() {
+  console.log('Circuit breaker open:', window.BotCache?.isCircuitOpen?.() || false);
+  console.log('Pending requests:', window.BotCache?.pendingCount?.() || 0);
 };
 
 // ============================================================================

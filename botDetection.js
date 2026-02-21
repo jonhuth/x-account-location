@@ -60,26 +60,14 @@ function extractReplyDataFromElement(el, username) {
 
 /**
  * Determine if reply should be sent to server for classification
- * Simple checks only - no pattern matching
+ * MINIMAL checks - we want scores for almost everything
  */
 function shouldClassify(replyData, isWhitelisted, userFollows) {
-  // Never classify whitelisted accounts
+  // Only skip whitelisted accounts
   if (isWhitelisted) return { action: 'skip', reason: 'whitelisted' };
   
-  // User follows = strong legitimacy signal, only classify if very short/empty
-  if (userFollows) {
-    // Only flag if literally empty or single character
-    if (replyData.replyText.length > 1) {
-      return { action: 'skip', reason: 'user_follows' };
-    }
-  }
-  
-  // Verified accounts with substantive replies = skip
-  if (replyData.isVerified && replyData.replyText.length > 50) {
-    return { action: 'skip', reason: 'verified_substantive' };
-  }
-  
   // Everything else goes to server for AI classification
+  // Server will return confidence scores for both humans and bots
   return { action: 'classify', reason: 'needs_analysis' };
 }
 

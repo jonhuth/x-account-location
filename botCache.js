@@ -6,7 +6,10 @@
 // ============================================================================
 
 const BOT_CACHE_KEY = 'bot_verdict_cache';
-const BOT_CACHE_EXPIRY_DAYS = 7;
+// Cache expiry based on confidence - high confidence verdicts cached longer
+const BOT_CACHE_EXPIRY_HIGH_CONF_DAYS = 30;  // >75% confidence: 30 days
+const BOT_CACHE_EXPIRY_MED_CONF_DAYS = 14;   // 50-75% confidence: 14 days  
+const BOT_CACHE_EXPIRY_LOW_CONF_DAYS = 7;    // <50% confidence: 7 days
 const BOT_CACHE_SAVE_INTERVAL = 5000;
 const BOT_BATCH_SIZE = 5;
 const BOT_BATCH_DELAY = 500; // Fast batching for real-time feel
@@ -60,7 +63,19 @@ async function loadBotCache() {
 
 function saveBotCache(username, verdict) {
   const now = Date.now();
-  const expiry = now + (BOT_CACHE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  
+  // Higher confidence = longer cache (accounts don't change quickly)
+  const confidence = verdict.confidence || 0;
+  let expiryDays;
+  if (confidence >= 0.75) {
+    expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS; // 30 days
+  } else if (confidence >= 0.5) {
+    expiryDays = BOT_CACHE_EXPIRY_MED_CONF_DAYS;  // 14 days
+  } else {
+    expiryDays = BOT_CACHE_EXPIRY_LOW_CONF_DAYS;  // 7 days
+  }
+  
+  const expiry = now + (expiryDays * 24 * 60 * 60 * 1000);
   
   botVerdictCache.set(username.toLowerCase(), {
     ...verdict,
@@ -439,5 +454,9 @@ if (typeof window !== 'undefined') {
     getWhitelist,
     getBotStats,
     BACKEND_URL,
+    // Debug helpers
+    isCircuitOpen,
+    pendingCount: () => pendingBotRequests.size,
+    queueLength: () => botClassificationQueue.length,
   };
 }

@@ -276,12 +276,56 @@ const BADGE_COLORS = {
   pending: { bg: '#374151', fg: '#9ca3af' }
 };
 
+function buildTooltip(verdict) {
+  const botProb = verdict.confidence || 0;
+  const pct = Math.round(botProb * 100);
+  const lines = [];
+  
+  // Header
+  if (verdict.isBot) {
+    lines.push(`🤖 ${pct}% Bot Probability`);
+  } else {
+    lines.push(`✓ ${pct}% Bot Probability (Likely Human)`);
+  }
+  lines.push('─'.repeat(28));
+  
+  // Category
+  if (verdict.category && verdict.category !== 'genuine') {
+    const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
+    lines.push(`Category: ${categoryLabel}`);
+  }
+  
+  // Reason from AI
+  if (verdict.reason) {
+    lines.push(`Reason: ${verdict.reason}`);
+  }
+  
+  // Signals breakdown (if provided by server)
+  if (verdict.signals && verdict.signals.length > 0) {
+    lines.push('');
+    lines.push('Signals detected:');
+    verdict.signals.forEach(signal => {
+      const icon = signal.startsWith('+') || signal.includes('spam') || signal.includes('bot') ? '⚠️' : '✓';
+      lines.push(`  ${icon} ${signal}`);
+    });
+  }
+  
+  // Source info
+  if (verdict.source) {
+    lines.push('');
+    lines.push(`Source: ${verdict.source === 'ai' ? 'AI Analysis' : verdict.source}`);
+  }
+  
+  return lines.join('\n');
+}
+
 function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
   
-  const confidence = verdict.confidence || 0;
-  const pct = Math.round(confidence * 100);
+  // confidence = bot probability (0-1)
+  const botProb = verdict.confidence || 0;
+  const pct = Math.round(botProb * 100);
   let severity = 'pending';
   let text = '•••';
   let title = 'Analyzing...';
@@ -294,32 +338,31 @@ function createBotBadge(verdict, animate = true) {
     bgColor = '#374151';
     fgColor = '#9ca3af';
   } else if (verdict.isBot) {
-    severity = getSeverityLevel(confidence);
+    // BOT - show bot probability (high = bad)
+    severity = getSeverityLevel(botProb);
     
     if (severity === 'high') {
       text = `🤖 ${pct}%`;
-      bgColor = '#dc2626';
+      bgColor = '#dc2626'; // Red
       fgColor = '#ffffff';
     } else if (severity === 'medium') {
       text = `⚠️ ${pct}%`;
-      bgColor = '#f59e0b';
+      bgColor = '#f59e0b'; // Amber
       fgColor = '#000000';
     } else {
       text = `? ${pct}%`;
-      bgColor = '#525252';
+      bgColor = '#525252'; // Gray
       fgColor = '#ffffff';
     }
     
-    const category = CATEGORY_LABELS[verdict.category] || 'Bot';
-    title = `Bot: ${pct}% · ${category}\n${verdict.reason || ''}`;
+    title = buildTooltip(verdict);
   } else {
-    // Human - show green with inverse probability
+    // HUMAN - show bot probability (low = good)
     severity = 'human';
-    const humanPct = 100 - pct;
-    text = `✓ ${humanPct}%`;
+    text = `✓ ${pct}%`;
     bgColor = '#166534'; // Dark green
     fgColor = '#dcfce7'; // Light green text
-    title = `Human: ${humanPct}% confidence`;
+    title = buildTooltip(verdict);
   }
   
   Object.assign(badge.style, {
@@ -397,12 +440,25 @@ function findHandleSection(container, screenName) {
 }
 
 function insertBotBadge(container, badge, screenName) {
-  // After country flag if exists
+  // PRIORITY 1: After country flag if exists (keeps flag + badge together)
   const existingFlag = container.querySelector('[data-twitter-flag]');
   if (existingFlag) {
-    try { existingFlag.after(badge); return true; } catch { /* continue */ }
+    try { 
+      existingFlag.after(badge); 
+      return true; 
+    } catch { /* continue */ }
   }
   
+  // PRIORITY 2: After flag shimmer (loading state for flag)
+  const flagShimmer = container.querySelector('[data-twitter-flag-shimmer]');
+  if (flagShimmer) {
+    try { 
+      flagShimmer.after(badge); 
+      return true; 
+    } catch { /* continue */ }
+  }
+  
+  // PRIORITY 3: Before @handle section
   const handleSection = findHandleSection(container, screenName);
   
   if (handleSection && handleSection.parentNode === container) {
@@ -413,6 +469,7 @@ function insertBotBadge(container, badge, screenName) {
     try { handleSection.parentNode.insertBefore(badge, handleSection); return true; } catch { /* continue */ }
   }
   
+  // PRIORITY 4: After display name
   const displayNameLink = container.querySelector('a[href^="/"]');
   if (displayNameLink) {
     const displayContainer = displayNameLink.closest('div');
@@ -421,6 +478,7 @@ function insertBotBadge(container, badge, screenName) {
     }
   }
   
+  // FALLBACK: Append
   try { container.appendChild(badge); return true; } catch { return false; }
 }
 
