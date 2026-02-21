@@ -364,8 +364,7 @@ function createBotBadge(verdict, animate = true) {
   }
   
   Object.assign(badge.style, {
-    display: 'inline-flex',
-    alignItems: 'center',
+    display: 'inline-block',
     fontSize: '11px',
     fontWeight: '600',
     padding: '1px 6px',
@@ -377,7 +376,11 @@ function createBotBadge(verdict, animate = true) {
     whiteSpace: 'nowrap',
     backgroundColor: bgColor,
     color: fgColor,
-    lineHeight: '1.3'
+    lineHeight: '1.3',
+    flexShrink: '0',
+    flexGrow: '0',
+    width: 'auto',
+    maxWidth: 'fit-content'
   });
   
   badge.textContent = text;
@@ -438,7 +441,8 @@ function findHandleSection(container, screenName) {
 }
 
 function insertBotBadge(container, badge, screenName) {
-  // Layout goal: [DisplayName] [Flag] [BotBadge] [@handle] [time]
+  // Layout goal: [DisplayName] [VerifiedBadge] [Flag] [BotBadge] [@handle] [time]
+  // Container is UserName div - we want to insert INLINE within the first row
   
   // PRIORITY 1: After existing flag (keeps flag + badge together)
   const existingFlag = container.querySelector('[data-twitter-flag]');
@@ -458,28 +462,27 @@ function insertBotBadge(container, badge, screenName) {
     } catch { /* continue */ }
   }
   
-  // PRIORITY 3: Before @handle section (flag not present yet)
-  // Note: When flag arrives later, it inserts before @handle too, so order becomes: [Flag] [Badge] [@handle]
-  // This is close enough - both are before @handle
-  const handleSection = findHandleSection(container, screenName);
-  if (handleSection) {
-    const parent = handleSection.parentNode;
-    if (parent) {
-      try { 
-        parent.insertBefore(badge, handleSection); 
-        return true; 
-      } catch { /* continue */ }
-    }
-  }
-  
-  // PRIORITY 4: After first link (display name)
-  const firstLink = container.querySelector('a[href^="/"]');
-  if (firstLink) {
+  // PRIORITY 3: Find the display name link and insert after it
+  // Look for the first link that is NOT the @handle link
+  const allLinks = container.querySelectorAll('a[href^="/"]');
+  for (const link of allLinks) {
+    const text = link.textContent?.trim() || '';
+    // Skip @handle links
+    if (text.startsWith('@')) continue;
+    // Skip time/date links
+    if (link.querySelector('time')) continue;
+    // This should be the display name link
     try {
-      firstLink.after(badge);
+      link.after(badge);
       return true;
     } catch { /* continue */ }
   }
+  
+  // PRIORITY 4: Insert as first child (fallback for unusual DOM structures)
+  try { 
+    container.insertBefore(badge, container.firstChild?.nextSibling || null); 
+    return true; 
+  } catch { /* continue */ }
   
   // FALLBACK: Append to end
   try { container.appendChild(badge); return true; } catch { return false; }

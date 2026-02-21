@@ -438,9 +438,25 @@ function findHandleSection(container, screenName) {
 }
 
 function insertFlagElement(container, flagSpan, screenName) {
-  // Layout goal: [DisplayName] [Flag] [BotBadge] [@handle] [time]
+  // Layout goal: [DisplayName] [VerifiedBadge] [Flag] [BotBadge] [@handle] [time]
+  // We want the flag to appear after the display name but before the bot badge
   
-  // PRIORITY 1: Before existing bot badge (so flag comes first)
+  // PRIORITY 1: After display name link (NOT the @handle link)
+  const allLinks = container.querySelectorAll('a[href^="/"]');
+  for (const link of allLinks) {
+    const text = link.textContent?.trim() || '';
+    // Skip @handle links
+    if (text.startsWith('@')) continue;
+    // Skip time/date links
+    if (link.querySelector('time')) continue;
+    // This should be the display name link - insert flag after it
+    try {
+      link.after(flagSpan);
+      return true;
+    } catch { /* continue */ }
+  }
+  
+  // PRIORITY 2: Before existing bot badge (if display name link wasn't found)
   const existingBotBadge = container.querySelector('[data-bot-badge]');
   if (existingBotBadge) {
     try { 
@@ -449,7 +465,7 @@ function insertFlagElement(container, flagSpan, screenName) {
     } catch { /* continue */ }
   }
   
-  // PRIORITY 2: Before bot skeleton (loading state)
+  // PRIORITY 3: Before bot skeleton (loading state)
   const botSkeleton = container.querySelector('[data-bot-skeleton]');
   if (botSkeleton) {
     try { 
@@ -458,29 +474,11 @@ function insertFlagElement(container, flagSpan, screenName) {
     } catch { /* continue */ }
   }
   
-  // PRIORITY 3: Before @handle section
-  const handleSection = findHandleSection(container, screenName);
-  if (handleSection) {
-    const parent = handleSection.parentNode;
-    if (parent) {
-      try { 
-        parent.insertBefore(flagSpan, handleSection); 
-        return true; 
-      } catch { /* continue */ }
-    }
-  }
-  
-  // PRIORITY 4: After display name link
-  const displayNameLink = container.querySelector('a[href^="/"]');
-  if (displayNameLink) {
-    try {
-      displayNameLink.after(flagSpan);
-      return true;
-    } catch { /* continue */ }
-  }
-  
-  // FALLBACK: Append
-  try { container.appendChild(flagSpan); return true; } catch { return false; }
+  // FALLBACK: Append as first child
+  try { 
+    container.insertBefore(flagSpan, container.firstChild?.nextSibling || null); 
+    return true; 
+  } catch { return false; }
 }
 
 function createLoadingShimmer() {
@@ -945,6 +943,43 @@ window.debugShowTweets = function() {
 window.debugBotCache = function() {
   console.log('Circuit breaker open:', window.BotCache?.isCircuitOpen?.() || false);
   console.log('Pending requests:', window.BotCache?.pendingCount?.() || 0);
+};
+
+window.debugUser = async function(username) {
+  console.log(`=== Debug: ${username} ===`);
+  
+  // Check location cache
+  const locCached = locationCache.get(username);
+  console.log('Location cache:', locCached || 'not cached');
+  
+  // Find tweets from this user
+  const tweets = Array.from(document.querySelectorAll('article[data-testid="tweet"]'));
+  const userTweets = tweets.filter(t => extractUsername(t) === username);
+  console.log(`Found ${userTweets.length} tweets from ${username}`);
+  
+  userTweets.forEach((t, i) => {
+    const userNameContainer = t.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+    console.log(`Tweet ${i + 1}:`, {
+      flagAdded: t.dataset.flagAdded,
+      botProcessed: t.dataset.botProcessed,
+      hasFlag: !!t.querySelector('[data-twitter-flag]'),
+      hasBotBadge: !!t.querySelector('[data-bot-badge]'),
+      userNameContainer: !!userNameContainer,
+      displayLinks: userNameContainer ? Array.from(userNameContainer.querySelectorAll('a')).map(a => ({
+        text: a.textContent?.slice(0, 20),
+        href: a.getAttribute('href')
+      })) : null
+    });
+  });
+  
+  // Try to get fresh location
+  console.log('Fetching fresh location...');
+  try {
+    const loc = await getLocation(username);
+    console.log('Location result:', loc);
+  } catch (e) {
+    console.log('Location error:', e);
+  }
 };
 
 // ============================================================================
