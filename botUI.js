@@ -1,219 +1,262 @@
 // Bot Detection UI Components
-// Real-time feel with optimistic updates and smooth animations
+// Compact, X-native chips — vanilla CSS only, layout-safe
 
 // ============================================================================
-// Styles - Optimized for perceived performance
+// Styles — small inline pills that sit in the username row
 // ============================================================================
 
 const BOT_UI_STYLES = `
-/* Bot badge - compact, inline */
+/* Shared chip base — matches X username density */
+.bot-badge,
+.bot-hide-btn,
+.bot-skeleton {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  max-width: none;
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Bot score chip */
 .bot-badge {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 2px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
   font-size: 11px;
   font-weight: 600;
-  padding: 1px 6px;
-  border-radius: 3px;
-  margin-left: 4px;
+  line-height: 1;
+  letter-spacing: 0;
   vertical-align: middle;
+  white-space: nowrap;
   cursor: pointer;
   user-select: none;
-  white-space: nowrap;
-  line-height: 1.3;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-  transition: all 0.15s ease;
-  transform: scale(1);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 
-/* Entrance animation */
+.bot-badge:hover {
+  filter: brightness(1.08);
+}
+
 @keyframes bot-badge-enter {
-  from { opacity: 0; transform: scale(0.8); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: translateY(1px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .bot-badge-enter {
-  animation: bot-badge-enter 0.15s ease forwards;
+  animation: bot-badge-enter 0.14s ease-out both;
 }
 
-/* High confidence bot - Red */
+/* High confidence bot */
 .bot-badge-high {
-  background: #dc2626;
-  color: #fff;
+  background: rgba(244, 33, 46, 0.16);
+  border-color: rgba(244, 33, 46, 0.45);
+  color: #f4212e;
 }
 
-/* Medium confidence - Amber */
+/* Medium confidence */
 .bot-badge-medium {
-  background: #f59e0b;
-  color: #000;
+  background: rgba(255, 173, 31, 0.16);
+  border-color: rgba(255, 173, 31, 0.45);
+  color: #d97706;
 }
 
-/* Low/Suspicious - Muted */
+/* Low / uncertain */
 .bot-badge-low {
-  background: #525252;
-  color: #e5e5e5;
+  background: rgba(113, 118, 123, 0.14);
+  border-color: rgba(113, 118, 123, 0.35);
+  color: #71767b;
 }
 
-/* Human - Green */
+/* Human */
 .bot-badge-human {
-  background: #166534;
-  color: #dcfce7;
+  background: rgba(0, 186, 124, 0.12);
+  border-color: rgba(0, 186, 124, 0.35);
+  color: #00ba7c;
 }
 
-/* Pending analysis - subtle shimmer */
+/* Pending */
 .bot-badge-pending {
-  background: linear-gradient(90deg, #27272a 0%, #3f3f46 50%, #27272a 100%);
-  background-size: 200% 100%;
-  color: #71717a;
-  animation: bot-shimmer 1.5s ease-in-out infinite;
+  background: rgba(113, 118, 123, 0.12);
+  border-color: rgba(113, 118, 123, 0.25);
+  color: #71767b;
+  min-width: 28px;
 }
 
-@keyframes bot-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* "Hide again" button */
+/* Hide-again chip */
 .bot-hide-btn {
   display: inline-flex;
   align-items: center;
-  font-size: 10px;
-  padding: 1px 5px;
-  border-radius: 3px;
+  height: 18px;
   margin-left: 4px;
-  background: #27272a;
-  color: #a1a1aa;
-  border: none;
-  cursor: pointer;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 118, 123, 0.35);
+  background: rgba(15, 20, 25, 0.04);
+  color: #71767b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
   vertical-align: middle;
-  transition: all 0.1s ease;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
 
 .bot-hide-btn:hover {
-  background: #3f3f46;
-  color: #fff;
+  background: rgba(113, 118, 123, 0.16);
+  border-color: rgba(113, 118, 123, 0.5);
+  color: inherit;
 }
 
-/* Dimmed reply - smooth transition */
+/* Dimmed bot reply — no blur (keeps layout crisp) */
 .bot-reply-dimmed {
-  opacity: 0.2 !important;
-  filter: grayscale(0.6) blur(0.5px);
-  transition: opacity 0.2s ease, filter 0.2s ease;
+  opacity: 0.32 !important;
+  transition: opacity 0.18s ease;
 }
 
 .bot-reply-dimmed:hover {
-  opacity: 0.5 !important;
-  filter: grayscale(0.3) blur(0);
+  opacity: 0.72 !important;
 }
 
-/* Left border accent */
+/* Layout-safe accent: inset shadow, no padding/border reflow */
 .bot-reply-flagged {
-  border-left: 2px solid #dc2626 !important;
-  padding-left: 12px !important;
-  transition: border-color 0.15s ease;
+  box-shadow: inset 3px 0 0 #f4212e !important;
 }
 
 .bot-reply-flagged-medium {
-  border-left: 2px solid #f59e0b !important;
-  padding-left: 12px !important;
+  box-shadow: inset 3px 0 0 #ffad1f !important;
 }
 
-/* Quick actions - appear on hover */
+/* Hover quick actions */
 .bot-actions {
   position: absolute;
-  top: 4px;
-  right: 44px;
+  top: 6px;
+  right: 48px;
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
   opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 0.1s ease, transform 0.1s ease;
-  z-index: 100;
+  transform: translateY(-2px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 50;
   pointer-events: none;
 }
 
-article[data-testid="tweet"]:hover .bot-actions {
+article[data-testid="tweet"]:hover > .bot-actions,
+article[data-testid="tweet"]:focus-within > .bot-actions {
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
 }
 
 .bot-action-btn {
-  padding: 5px 10px;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 118, 123, 0.35);
+  background: rgba(0, 0, 0, 0.72);
+  color: #e7e9ea;
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: none;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
-  background: rgba(0,0,0,0.9);
-  backdrop-filter: blur(8px);
-  transition: all 0.1s ease;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
 .bot-action-whitelist {
-  color: #22c55e;
+  color: #00ba7c;
 }
 
 .bot-action-whitelist:hover {
-  background: #22c55e;
-  color: #000;
-  transform: scale(1.05);
+  background: rgba(0, 186, 124, 0.18);
+  border-color: rgba(0, 186, 124, 0.55);
+  color: #00ba7c;
 }
 
 .bot-action-block {
-  color: #ef4444;
+  color: #f4212e;
 }
 
 .bot-action-block:hover {
-  background: #ef4444;
-  color: #fff;
-  transform: scale(1.05);
+  background: rgba(244, 33, 46, 0.16);
+  border-color: rgba(244, 33, 46, 0.5);
+  color: #f4212e;
 }
 
-/* Toast notification */
+/* Toast */
 .bot-toast {
   position: fixed;
-  bottom: 24px;
+  bottom: 28px;
   left: 50%;
-  transform: translateX(-50%) translateY(0);
-  background: #18181b;
-  color: #fafafa;
-  padding: 12px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 118, 123, 0.3);
+  background: rgba(15, 20, 25, 0.92);
+  color: #e7e9ea;
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
   z-index: 10000;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
-  animation: bot-toast-in 0.2s ease;
+  pointer-events: none;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: bot-toast-in 0.18s ease-out both;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 @keyframes bot-toast-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* Skeleton loading for pending */
+/* Pending skeleton */
+@keyframes bot-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .bot-skeleton {
   display: inline-block;
-  width: 36px;
+  width: 32px;
   height: 14px;
   margin-left: 4px;
   vertical-align: middle;
-  border-radius: 3px;
-  background: linear-gradient(90deg, #27272a 0%, #3f3f46 50%, #27272a 100%);
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(113, 118, 123, 0.12) 0%,
+    rgba(113, 118, 123, 0.28) 50%,
+    rgba(113, 118, 123, 0.12) 100%
+  );
   background-size: 200% 100%;
   animation: bot-shimmer 1.2s ease-in-out infinite;
 }
 
-/* Processed indicator (subtle) */
+/* Subtle human check dot (legacy helper) */
 .bot-checked {
   display: inline-block;
   width: 6px;
   height: 6px;
   margin-left: 4px;
   border-radius: 50%;
-  background: #22c55e;
-  opacity: 0.4;
+  background: #00ba7c;
+  opacity: 0.45;
   vertical-align: middle;
 }
 `;
@@ -269,124 +312,74 @@ function getSeverityLevel(confidence) {
   return 'low';
 }
 
-const BADGE_COLORS = {
-  high: { bg: '#dc2626', fg: '#ffffff' },
-  medium: { bg: '#f59e0b', fg: '#000000' },
-  low: { bg: '#525252', fg: '#ffffff' },
-  pending: { bg: '#374151', fg: '#9ca3af' }
-};
-
 /**
  * SCORING: confidence = how sure AI is about its classification
  * - isBot=true, confidence=0.95 → 95% sure it's a bot
  * - isBot=false, confidence=0.95 → 95% sure it's human
- * 
- * DISPLAY: Always show confidence with clear bot/human label
+ *
+ * DISPLAY: Compact score chip; styling lives entirely in BOT_UI_STYLES
  */
 
 function buildTooltip(verdict) {
   const conf = Math.round((verdict.confidence || 0) * 100);
   const lines = [];
-  
-  // Header - clear labeling
+
   if (verdict.isBot) {
-    lines.push(`🤖 ${conf}% confidence this is a BOT`);
+    lines.push(`${conf}% bot confidence`);
   } else {
-    lines.push(`✓ ${conf}% confidence this is HUMAN`);
+    lines.push(`${conf}% human confidence`);
   }
-  lines.push('─'.repeat(32));
-  
-  // Category (for bots)
+
   if (verdict.isBot && verdict.category && verdict.category !== 'genuine') {
     const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
     lines.push(`Type: ${categoryLabel}`);
   }
-  
-  // Reason from AI
+
   if (verdict.reason) {
-    lines.push(`Reason: ${verdict.reason}`);
+    lines.push(verdict.reason);
   }
-  
-  // Signals breakdown
-  if (verdict.signals && verdict.signals.length > 0) {
-    lines.push('');
-    lines.push('Signals:');
-    verdict.signals.forEach(signal => {
-      lines.push(`  • ${signal}`);
-    });
+
+  if (Array.isArray(verdict.signals) && verdict.signals.length > 0) {
+    lines.push(verdict.signals.map((s) => `• ${s}`).join('\n'));
   }
-  
+
   return lines.join('\n');
 }
 
 function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
-  
+
   const conf = Math.round((verdict.confidence || 0) * 100);
   let severity = 'pending';
-  let text = '•••';
-  let title = 'Analyzing...';
-  let bgColor, fgColor;
-  
+  let text = '···';
+  let title = 'Analyzing…';
+
   if (verdict.isBot === 'pending') {
     severity = 'pending';
-    text = '•••';
-    title = 'Analyzing...';
-    bgColor = '#374151';
-    fgColor = '#9ca3af';
+    text = '···';
+    title = 'Analyzing…';
   } else if (verdict.isBot) {
-    // BOT - red/amber based on confidence
     severity = getSeverityLevel(verdict.confidence || 0);
-    
+    // Compact labels — emoji + score reads dense in the username row
     if (severity === 'high') {
-      text = `🤖${conf}%`;  // High confidence bot
-      bgColor = '#dc2626';
-      fgColor = '#ffffff';
+      text = `bot ${conf}`;
     } else if (severity === 'medium') {
-      text = `⚠️${conf}%`;  // Medium confidence bot
-      bgColor = '#f59e0b';
-      fgColor = '#000000';
+      text = `? ${conf}`;
     } else {
-      text = `?${conf}%`;   // Low confidence bot
-      bgColor = '#525252';
-      fgColor = '#ffffff';
+      text = `~ ${conf}`;
     }
-    
     title = buildTooltip(verdict);
   } else {
-    // HUMAN - green, show confidence
     severity = 'human';
-    text = `✓${conf}%`;
-    bgColor = '#166534';
-    fgColor = '#dcfce7';
+    text = `✓ ${conf}`;
     title = buildTooltip(verdict);
   }
-  
-  Object.assign(badge.style, {
-    display: 'inline-block',
-    fontSize: '11px',
-    fontWeight: '600',
-    padding: '1px 6px',
-    borderRadius: '3px',
-    marginLeft: '4px',
-    verticalAlign: 'middle',
-    cursor: 'pointer',
-    userSelect: 'none',
-    whiteSpace: 'nowrap',
-    backgroundColor: bgColor,
-    color: fgColor,
-    lineHeight: '1.3',
-    flexShrink: '0',
-    flexGrow: '0',
-    width: 'auto',
-    maxWidth: 'fit-content'
-  });
-  
+
   badge.textContent = text;
   badge.title = title;
   badge.className = `bot-badge bot-badge-${severity}${animate ? ' bot-badge-enter' : ''}`;
-  
+
   return badge;
 }
 
@@ -409,18 +402,19 @@ function createCheckedDot() {
 
 function createHideAgainButton(container) {
   const btn = document.createElement('button');
+  btn.type = 'button';
   btn.className = 'bot-hide-btn';
   btn.setAttribute('data-bot-hide-btn', 'true');
   btn.textContent = 'Hide';
   btn.title = 'Re-hide this reply';
-  
+
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
     container.classList.add('bot-reply-dimmed');
     btn.remove();
   });
-  
+
   return btn;
 }
 
@@ -634,32 +628,32 @@ function addQuickActions(container, username) {
   
   const actions = document.createElement('div');
   actions.className = 'bot-actions';
-  
+
   const whitelistBtn = document.createElement('button');
+  whitelistBtn.type = 'button';
   whitelistBtn.className = 'bot-action-btn bot-action-whitelist';
-  whitelistBtn.textContent = '✓ Human';
+  whitelistBtn.textContent = 'Human';
   whitelistBtn.title = `Whitelist @${resolvedUsername}`;
   whitelistBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
-    
-    console.log('BotUI: Whitelisting', resolvedUsername);
+
     window.BotCache?.addToWhitelist?.(resolvedUsername);
     removeBotUI(container);
     showToast(`@${resolvedUsername} whitelisted`);
-    
-    // Update all instances
+
     const lowerUsername = resolvedUsername.toLowerCase();
-    document.querySelectorAll(`[data-bot-username="${lowerUsername}"]`).forEach(el => {
+    document.querySelectorAll(`[data-bot-username="${lowerUsername}"]`).forEach((el) => {
       removeBotUI(el);
       el.dataset.botProcessed = 'whitelisted';
     });
     container.dataset.botProcessed = 'whitelisted';
   });
-  
+
   const blockBtn = document.createElement('button');
+  blockBtn.type = 'button';
   blockBtn.className = 'bot-action-btn bot-action-block';
-  blockBtn.textContent = '🚫 Block';
+  blockBtn.textContent = 'Block';
   blockBtn.title = `Block @${resolvedUsername}`;
   blockBtn.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -672,11 +666,14 @@ function addQuickActions(container, username) {
       }, 100);
     }
   });
-  
+
   actions.appendChild(whitelistBtn);
   actions.appendChild(blockBtn);
-  
-  container.style.position = 'relative';
+
+  // Relative positioning for absolute action bar — articles are often already relative
+  if (getComputedStyle(container).position === 'static') {
+    container.style.position = 'relative';
+  }
   container.insertBefore(actions, container.firstChild);
 }
 

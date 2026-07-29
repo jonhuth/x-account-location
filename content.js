@@ -481,18 +481,83 @@ function insertFlagElement(container, flagSpan, screenName) {
   } catch { return false; }
 }
 
+// Compact location chips — vanilla CSS, no external deps
+const LOCATION_UI_STYLES = `
+@keyframes xat-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.xat-flag,
+.xat-flag-shimmer {
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.xat-flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin: 0 2px 0 4px;
+  padding: 0 2px;
+  vertical-align: middle;
+  line-height: 1;
+  font-size: 14px;
+  color: inherit;
+  user-select: none;
+}
+
+.xat-flag--text {
+  height: 18px;
+  max-width: 7.5em;
+  padding: 0 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 118, 123, 0.3);
+  background: rgba(113, 118, 123, 0.1);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #71767b;
+}
+
+.xat-flag-shimmer {
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  margin: 0 2px 0 4px;
+  vertical-align: middle;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(113, 118, 123, 0.12) 0%,
+    rgba(113, 118, 123, 0.28) 50%,
+    rgba(113, 118, 123, 0.12) 100%
+  );
+  background-size: 200% 100%;
+  animation: xat-shimmer 1.2s ease-in-out infinite;
+}
+`;
+
+function injectLocationStyles() {
+  if (document.getElementById('xat-location-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'xat-location-styles';
+  style.textContent = LOCATION_UI_STYLES;
+  document.head.appendChild(style);
+}
+
 function createLoadingShimmer() {
+  injectLocationStyles();
   const shimmer = document.createElement('span');
+  shimmer.className = 'xat-flag-shimmer';
   shimmer.setAttribute('data-twitter-flag-shimmer', 'true');
-  shimmer.style.cssText = 'display:inline-block;width:20px;height:16px;margin:0 4px;vertical-align:middle;border-radius:2px;background:linear-gradient(90deg,rgba(113,118,123,0.2) 25%,rgba(113,118,123,0.4) 50%,rgba(113,118,123,0.2) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite';
-  
-  if (!document.getElementById('twitter-flag-shimmer-style')) {
-    const style = document.createElement('style');
-    style.id = 'twitter-flag-shimmer-style';
-    style.textContent = `@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }`;
-    document.head.appendChild(style);
-  }
-  
+  shimmer.setAttribute('aria-hidden', 'true');
   return shimmer;
 }
 
@@ -570,26 +635,29 @@ function processUsernamesThrottled() {
 function addFlagToElement(usernameElement, screenName, locationInfo) {
   if (usernameElement.querySelector('[data-twitter-flag]')) return true;
   if (!locationInfo?.location) return false;
-  
+
   const containerForFlag = usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   if (!containerForFlag) return false;
-  
+
+  injectLocationStyles();
+
+  const hasEmojiFlag = Boolean(locationInfo.flag);
   const flagSpan = document.createElement('span');
-  flagSpan.textContent = ` ${locationInfo.displayText}`;
+  flagSpan.className = hasEmojiFlag ? 'xat-flag' : 'xat-flag xat-flag--text';
+  // Emoji flags: bare glyph. Unknown locations: compact muted chip, no leading space.
+  flagSpan.textContent = hasEmojiFlag
+    ? locationInfo.flag
+    : String(locationInfo.location || '').trim();
   flagSpan.setAttribute('data-twitter-flag', 'true');
   flagSpan.setAttribute('title', locationInfo.location);
-  Object.assign(flagSpan.style, {
-    marginLeft: '4px', marginRight: '4px', display: 'inline', color: 'inherit',
-    verticalAlign: 'middle', fontSize: locationInfo.flag ? 'inherit' : '0.9em',
-    opacity: locationInfo.flag ? '1' : '0.7'
-  });
-  
+  flagSpan.setAttribute('aria-label', `Account based in ${locationInfo.location}`);
+
   if (insertFlagElement(containerForFlag, flagSpan, screenName)) {
     usernameElement.dataset.flagAdded = 'true';
     updateStats(screenName, locationInfo.location);
     return true;
   }
-  
+
   return false;
 }
 
@@ -997,10 +1065,11 @@ async function init() {
   
   // pageScript is needed for location data - only inject if location is enabled
   if (extensionEnabled) {
+    injectLocationStyles();
     injectPageScript();
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  
+
   // Bot detection setup (independent of location)
   if (botDetectionEnabled) {
     window.BotUI?.injectBotStyles?.();
