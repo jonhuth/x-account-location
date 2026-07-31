@@ -229,6 +229,8 @@ const CATEGORY_LABELS = {
   self_promoter: '📢 Self-Promoter',
   airdrop_farmer: '🪂 Airdrop Farmer',
   crypto_spam: '💩 Crypto Spam',
+  llm_slop: '🟣 LLM Slop',
+  genuine: '✓ Human',
 };
 
 // Load bot detection state
@@ -384,8 +386,9 @@ lookupBtn.addEventListener('click', async () => {
 
 function displayLookupResult(username, verdict) {
   const isBot = verdict.isBot;
-  const verdictClass = isBot ? 'bot' : 'human';
-  const verdictText = isBot ? '🤖 Bot' : '✓ Human';
+  const isSlop = verdict.isSlop && !isBot;
+  const verdictClass = isBot ? 'bot' : (isSlop ? 'bot' : 'human');
+  const verdictText = isBot ? '🤖 Bot' : (isSlop ? '🟣 Slop' : '✓ Human');
   
   lookupResult.innerHTML = `
     <div class="lookup-result ${verdictClass}">
@@ -393,7 +396,7 @@ function displayLookupResult(username, verdict) {
         <span class="lookup-result-username">@${username}</span>
         <span class="lookup-result-verdict ${verdictClass}">${verdictText}</span>
       </div>
-      ${isBot ? `<div class="lookup-result-reason">${verdict.reason || CATEGORY_LABELS[verdict.category] || 'Detected as bot'}</div>` : ''}
+      ${(isBot || isSlop) ? `<div class="lookup-result-reason">${verdict.reason || CATEGORY_LABELS[verdict.category] || 'Detected'}</div>` : ''}
     </div>
   `;
 }

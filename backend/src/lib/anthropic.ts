@@ -6,6 +6,7 @@ const anthropic = new Anthropic();
 
 interface AIResponse {
 	is_bot: boolean;
+	is_slop?: boolean;
 	confidence: number;
 	category: SpamCategory;
 	reason: string;
@@ -19,17 +20,24 @@ function parseAIResponse(text: string): AIResponse | null {
 			.replace(/```\n?/g, "")
 			.trim();
 		const parsed = JSON.parse(cleaned);
-		return {
-			is_bot: Boolean(parsed.is_bot),
-			confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
-			category: validateCategory(parsed.category),
-			reason: String(parsed.reason || "Unknown"),
-			signals: Array.isArray(parsed.signals) ? parsed.signals.slice(0, 5) : [],
-		};
+		return normalizeParsed(parsed);
 	} catch {
 		console.error("Failed to parse AI response:", text.substring(0, 200));
 		return null;
 	}
+}
+
+function normalizeParsed(parsed: Record<string, unknown>): AIResponse {
+	const isBot = Boolean(parsed.is_bot);
+	const isSlop = parsed.is_slop !== undefined ? Boolean(parsed.is_slop) : isBot;
+	return {
+		is_bot: isBot,
+		is_slop: isSlop,
+		confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
+		category: validateCategory(parsed.category),
+		reason: String(parsed.reason || "Unknown"),
+		signals: Array.isArray(parsed.signals) ? (parsed.signals as unknown[]).map(String).slice(0, 5) : [],
+	};
 }
 
 function parseBatchAIResponse(text: string, expectedCount: number): AIResponse[] {
@@ -41,29 +49,14 @@ function parseBatchAIResponse(text: string, expectedCount: number): AIResponse[]
 		const parsed = JSON.parse(cleaned);
 
 		if (!Array.isArray(parsed)) {
-			// Try to wrap single object response
-			if (expectedCount === 1 && typeof parsed === "object") {
-				return [
-					{
-						is_bot: Boolean(parsed.is_bot),
-						confidence: Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5)),
-						category: validateCategory(parsed.category),
-						reason: String(parsed.reason || "Unknown"),
-						signals: Array.isArray(parsed.signals) ? parsed.signals.slice(0, 5) : [],
-					},
-				];
+			if (expectedCount === 1 && typeof parsed === "object" && parsed) {
+				return [normalizeParsed(parsed as Record<string, unknown>)];
 			}
 			console.error("Batch response is not an array");
 			return [];
 		}
 
-		return parsed.map((item) => ({
-			is_bot: Boolean(item.is_bot),
-			confidence: Math.min(1, Math.max(0, Number(item.confidence) || 0.5)),
-			category: validateCategory(item.category),
-			reason: String(item.reason || "Unknown"),
-			signals: Array.isArray(item.signals) ? item.signals.slice(0, 5) : [],
-		}));
+		return parsed.map((item: Record<string, unknown>) => normalizeParsed(item));
 	} catch {
 		console.error("Failed to parse batch AI response:", text.substring(0, 200));
 		return [];
@@ -77,6 +70,7 @@ function validateCategory(cat: unknown): SpamCategory {
 		"self_promoter",
 		"airdrop_farmer",
 		"crypto_spam",
+		"llm_slop",
 		"genuine",
 	];
 	if (typeof cat === "string" && valid.includes(cat as SpamCategory)) {
@@ -85,11 +79,25 @@ function validateCategory(cat: unknown): SpamCategory {
 	return "crypto_spam";
 }
 
+function toVerdict(parsed: AIResponse): BotVerdict {
+	const isBot = parsed.is_bot;
+	const isSlop = parsed.is_slop !== undefined ? Boolean(parsed.is_slop) : isBot;
+	return {
+		isBot,
+		isSlop: isBot ? true : isSlop,
+		confidence: parsed.confidence,
+		category: parsed.category,
+		reason: parsed.reason,
+		signals: parsed.signals,
+		source: "ai",
+	};
+}
+
 export async function classifySingleReply(reply: ReplyData): Promise<BotVerdict | null> {
 	try {
 		const message = await anthropic.messages.create({
 			model: "claude-haiku-4-5-20251001",
-			max_tokens: 256,
+			max_tokens: 280,
 			system: SYSTEM_PROMPT,
 			messages: [{ role: "user", content: buildSingleUserMessage(reply) }],
 		});
@@ -100,14 +108,7 @@ export async function classifySingleReply(reply: ReplyData): Promise<BotVerdict 
 		const parsed = parseAIResponse(content.text);
 		if (!parsed) return null;
 
-		return {
-			isBot: parsed.is_bot,
-			confidence: parsed.confidence,
-			category: parsed.category,
-			reason: parsed.reason,
-			signals: parsed.signals,
-			source: "ai",
-		};
+		return toVerdict(parsed);
 	} catch (error) {
 		console.error("Anthropic API error:", error);
 		return null;
@@ -124,7 +125,7 @@ export async function classifyBatchReplies(replies: ReplyData[]): Promise<(BotVe
 	try {
 		const message = await anthropic.messages.create({
 			model: "claude-haiku-4-5-20251001",
-			max_tokens: 512,
+			max_tokens: 640,
 			system: SYSTEM_PROMPT,
 			messages: [{ role: "user", content: buildUserMessage(replies) }],
 		});
@@ -139,14 +140,7 @@ export async function classifyBatchReplies(replies: ReplyData[]): Promise<(BotVe
 		const results: (BotVerdict | null)[] = [];
 		for (let i = 0; i < replies.length; i++) {
 			if (parsed[i]) {
-				results.push({
-					isBot: parsed[i].is_bot,
-					confidence: parsed[i].confidence,
-					category: parsed[i].category,
-					reason: parsed[i].reason,
-					signals: parsed[i].signals,
-					source: "ai",
-				});
+				results.push(toVerdict(parsed[i]));
 			} else {
 				results.push(null);
 			}

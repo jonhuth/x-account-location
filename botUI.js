@@ -124,6 +124,16 @@ const BOT_UI_STYLES = `
   opacity: 0.72 !important;
 }
 
+/* Slop (human but low-info) — lighter dim than hard bots */
+.bot-reply-slop {
+  opacity: 0.55 !important;
+  transition: opacity 0.18s ease;
+}
+
+.bot-reply-slop:hover {
+  opacity: 0.88 !important;
+}
+
 /* Layout-safe accent: inset shadow, no padding/border reflow */
 .bot-reply-flagged {
   box-shadow: inset 3px 0 0 #f4212e !important;
@@ -131,6 +141,24 @@ const BOT_UI_STYLES = `
 
 .bot-reply-flagged-medium {
   box-shadow: inset 3px 0 0 #ffad1f !important;
+}
+
+.bot-reply-flagged-slop {
+  box-shadow: inset 3px 0 0 #a855f7 !important;
+}
+
+/* Slop badge */
+.bot-badge-slop {
+  background: rgba(168, 85, 247, 0.14);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: #c084fc;
+}
+
+/* Trust / followed */
+.bot-badge-trust {
+  background: rgba(29, 155, 240, 0.12);
+  border-color: rgba(29, 155, 240, 0.35);
+  color: #1d9bf0;
 }
 
 /* Hover quick actions */
@@ -299,10 +327,11 @@ function showToast(message, duration = 2000) {
 
 const CATEGORY_LABELS = {
   engagement_farmer: 'Farmer',
-  sycophant: 'Bot',
+  sycophant: 'Sycophant',
   self_promoter: 'Shill',
   airdrop_farmer: 'Airdrop',
   crypto_spam: 'Spam',
+  llm_slop: 'Slop',
   genuine: 'Human',
 };
 
@@ -326,13 +355,27 @@ function buildTooltip(verdict) {
 
   if (verdict.isBot) {
     lines.push(`${conf}% bot confidence`);
+  } else if (verdict.isSlop) {
+    lines.push(`${conf}% slop confidence (human, low-info)`);
   } else {
     lines.push(`${conf}% human confidence`);
   }
 
-  if (verdict.isBot && verdict.category && verdict.category !== 'genuine') {
+  if (verdict.category && verdict.category !== 'genuine') {
     const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
     lines.push(`Type: ${categoryLabel}`);
+  }
+
+  if (verdict.source) {
+    lines.push(`Source: ${verdict.source}`);
+  }
+
+  if (verdict.trustTier && verdict.trustTier !== 'none') {
+    lines.push(`Trust: ${verdict.trustTier}`);
+  }
+
+  if (verdict.accountScore != null) {
+    lines.push(`Account prior: ${Math.round(Number(verdict.accountScore) * 100)}%`);
   }
 
   if (verdict.reason) {
@@ -342,6 +385,8 @@ function buildTooltip(verdict) {
   if (Array.isArray(verdict.signals) && verdict.signals.length > 0) {
     lines.push(verdict.signals.map((s) => `• ${s}`).join('\n'));
   }
+
+  lines.push('Click badge for feedback');
 
   return lines.join('\n');
 }
@@ -359,9 +404,12 @@ function createBotBadge(verdict, animate = true) {
     severity = 'pending';
     text = '···';
     title = 'Analyzing…';
+  } else if (verdict.source === 'trust' || verdict.trustTier === 'following') {
+    severity = 'trust';
+    text = `✓ ${conf}`;
+    title = buildTooltip(verdict);
   } else if (verdict.isBot) {
     severity = getSeverityLevel(verdict.confidence || 0);
-    // Compact labels — emoji + score reads dense in the username row
     if (severity === 'high') {
       text = `bot ${conf}`;
     } else if (severity === 'medium') {
@@ -369,6 +417,10 @@ function createBotBadge(verdict, animate = true) {
     } else {
       text = `~ ${conf}`;
     }
+    title = buildTooltip(verdict);
+  } else if (verdict.isSlop) {
+    severity = 'slop';
+    text = `slop ${conf}`;
     title = buildTooltip(verdict);
   } else {
     severity = 'human';
@@ -550,30 +602,36 @@ function applyBotUI(replyElement, verdict, username) {
   const confidence = verdict.confidence || 0;
   const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   
-  // ALWAYS show a score badge (human or bot)
+  // ALWAYS show a score badge (human, slop, or bot)
   if (userNameContainer) {
     const badge = createBotBadge(verdict, true);
+    // Click badge → feedback actions
+    badge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      addQuickActions(container, resolvedUsername, true);
+    });
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
   
-  // Additional styling for bots
+  // Dim / flag bots
   if (verdict.isBot === true) {
     const severity = getSeverityLevel(confidence);
     
-    // Add colored border
     if (severity === 'high') {
       container.classList.add('bot-reply-flagged');
     } else if (severity === 'medium') {
       container.classList.add('bot-reply-flagged-medium');
     }
     
-    // Dim high-confidence bots
-    if (confidence >= 0.7) {
+    // Dim high-confidence bots (sensitivity can raise/lower later via dataset)
+    const dimThreshold = Number(container.dataset.botDimThreshold) || 0.7;
+    if (confidence >= dimThreshold) {
       container.classList.add('bot-reply-dimmed');
       addQuickActions(container, resolvedUsername);
       
       container.addEventListener('click', function revealHandler(e) {
-        if (e.target.closest('.bot-action-btn')) return;
+        if (e.target.closest('.bot-action-btn') || e.target.closest('[data-bot-badge]')) return;
         
         container.classList.remove('bot-reply-dimmed');
         container.removeEventListener('click', revealHandler);
@@ -584,6 +642,17 @@ function applyBotUI(replyElement, verdict, username) {
         }
       });
     }
+  } else if (verdict.isSlop === true && confidence >= 0.65) {
+    // Lighter treatment for slop-only (not hard bot)
+    container.classList.add('bot-reply-flagged-slop');
+    container.classList.add('bot-reply-slop');
+    addQuickActions(container, resolvedUsername);
+    
+    container.addEventListener('click', function revealHandler(e) {
+      if (e.target.closest('.bot-action-btn') || e.target.closest('[data-bot-badge]')) return;
+      container.classList.remove('bot-reply-slop');
+      container.removeEventListener('click', revealHandler);
+    });
   }
 }
 
@@ -595,8 +664,8 @@ function removeBotUI(container) {
   container.querySelector('.bot-actions')?.remove();
   
   container.classList.remove(
-    'bot-reply-dimmed', 'bot-reply-container',
-    'bot-reply-flagged', 'bot-reply-flagged-medium'
+    'bot-reply-dimmed', 'bot-reply-container', 'bot-reply-slop',
+    'bot-reply-flagged', 'bot-reply-flagged-medium', 'bot-reply-flagged-slop'
   );
   
   container.style.removeProperty('position');
@@ -607,10 +676,18 @@ function removeBotUI(container) {
 // Quick Actions
 // ============================================================================
 
-function addQuickActions(container, username) {
+function applyOverrideEverywhere(username, verdict, status) {
+  const lower = String(username).toLowerCase();
+  document.querySelectorAll(`[data-bot-username="${lower}"]`).forEach((el) => {
+    removeBotUI(el);
+    if (verdict) applyBotUI(el, verdict, username);
+    el.dataset.botProcessed = status;
+  });
+}
+
+function addQuickActions(container, username, forceShow = false) {
   container.querySelector('.bot-actions')?.remove();
   
-  // Ensure we have a username - extract from DOM if needed
   let resolvedUsername = username;
   if (!resolvedUsername) {
     const usernameLink = container.querySelector('[data-testid="UserName"] a[href^="/"], [data-testid="User-Name"] a[href^="/"]');
@@ -621,40 +698,84 @@ function addQuickActions(container, username) {
     }
   }
   
-  if (!resolvedUsername) {
-    console.warn('BotUI: Could not resolve username for quick actions');
-    return;
-  }
+  if (!resolvedUsername) return;
   
   const actions = document.createElement('div');
   actions.className = 'bot-actions';
+  if (forceShow) {
+    actions.style.opacity = '1';
+    actions.style.pointerEvents = 'auto';
+    actions.style.transform = 'translateY(0)';
+  }
 
-  const whitelistBtn = document.createElement('button');
-  whitelistBtn.type = 'button';
-  whitelistBtn.className = 'bot-action-btn bot-action-whitelist';
-  whitelistBtn.textContent = 'Human';
-  whitelistBtn.title = `Whitelist @${resolvedUsername}`;
-  whitelistBtn.addEventListener('click', (e) => {
+  const humanBtn = document.createElement('button');
+  humanBtn.type = 'button';
+  humanBtn.className = 'bot-action-btn bot-action-whitelist';
+  humanBtn.textContent = 'Human';
+  humanBtn.title = `Mark @${resolvedUsername} as human (whitelist)`;
+  humanBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
+    await window.BotCache?.addToWhitelist?.(resolvedUsername);
+    const verdict = {
+      isBot: false,
+      isSlop: false,
+      confidence: 0.99,
+      category: 'genuine',
+      reason: 'You marked this account as human',
+      signals: ['user_override_human'],
+      source: 'override',
+      trustTier: 'override_human',
+    };
+    window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
+    showToast(`@${resolvedUsername} marked human`);
+    applyOverrideEverywhere(resolvedUsername, verdict, 'whitelisted');
+  });
 
-    window.BotCache?.addToWhitelist?.(resolvedUsername);
-    removeBotUI(container);
-    showToast(`@${resolvedUsername} whitelisted`);
-
-    const lowerUsername = resolvedUsername.toLowerCase();
-    document.querySelectorAll(`[data-bot-username="${lowerUsername}"]`).forEach((el) => {
-      removeBotUI(el);
-      el.dataset.botProcessed = 'whitelisted';
+  const botBtn = document.createElement('button');
+  botBtn.type = 'button';
+  botBtn.className = 'bot-action-btn bot-action-block';
+  botBtn.textContent = 'Bot';
+  botBtn.title = `Mark @${resolvedUsername} as bot`;
+  botBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    await window.BotCache?.setOverride?.(resolvedUsername, {
+      forceBot: true,
+      forceHuman: false,
+      forceSlop: false,
     });
-    container.dataset.botProcessed = 'whitelisted';
+    const verdict = window.BotCache?.getOverrideVerdict?.(resolvedUsername);
+    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
+    showToast(`@${resolvedUsername} marked bot`);
+    applyOverrideEverywhere(resolvedUsername, verdict, 'bot');
+  });
+
+  const slopBtn = document.createElement('button');
+  slopBtn.type = 'button';
+  slopBtn.className = 'bot-action-btn';
+  slopBtn.textContent = 'Slop';
+  slopBtn.title = `Mark @${resolvedUsername} as slop (not bot)`;
+  slopBtn.style.color = '#c084fc';
+  slopBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    await window.BotCache?.setOverride?.(resolvedUsername, {
+      forceSlop: true,
+      forceBot: false,
+      forceHuman: false,
+    });
+    const verdict = window.BotCache?.getOverrideVerdict?.(resolvedUsername);
+    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
+    showToast(`@${resolvedUsername} marked slop`);
+    applyOverrideEverywhere(resolvedUsername, verdict, 'slop');
   });
 
   const blockBtn = document.createElement('button');
   blockBtn.type = 'button';
   blockBtn.className = 'bot-action-btn bot-action-block';
   blockBtn.textContent = 'Block';
-  blockBtn.title = `Block @${resolvedUsername}`;
+  blockBtn.title = `Block @${resolvedUsername} on X`;
   blockBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     e.preventDefault();
@@ -667,14 +788,25 @@ function addQuickActions(container, username) {
     }
   });
 
-  actions.appendChild(whitelistBtn);
+  actions.appendChild(humanBtn);
+  actions.appendChild(botBtn);
+  actions.appendChild(slopBtn);
   actions.appendChild(blockBtn);
 
-  // Relative positioning for absolute action bar — articles are often already relative
   if (getComputedStyle(container).position === 'static') {
     container.style.position = 'relative';
   }
   container.insertBefore(actions, container.firstChild);
+
+  // Auto-hide forced feedback bar
+  if (forceShow) {
+    setTimeout(() => {
+      if (actions.isConnected && !container.matches(':hover')) {
+        actions.style.opacity = '';
+        actions.style.pointerEvents = '';
+      }
+    }, 4000);
+  }
 }
 
 // ============================================================================
@@ -694,8 +826,8 @@ function updateBotVerdict(username, verdict) {
 
 function removeAllBotUI() {
   document.querySelectorAll('[data-bot-badge], [data-bot-hide-btn], [data-bot-skeleton], [data-bot-checked], .bot-actions').forEach(el => el.remove());
-  document.querySelectorAll('.bot-reply-dimmed, .bot-reply-container, .bot-reply-flagged, .bot-reply-flagged-medium').forEach(el => {
-    el.classList.remove('bot-reply-dimmed', 'bot-reply-container', 'bot-reply-flagged', 'bot-reply-flagged-medium');
+  document.querySelectorAll('.bot-reply-dimmed, .bot-reply-slop, .bot-reply-container, .bot-reply-flagged, .bot-reply-flagged-medium, .bot-reply-flagged-slop').forEach(el => {
+    el.classList.remove('bot-reply-dimmed', 'bot-reply-slop', 'bot-reply-container', 'bot-reply-flagged', 'bot-reply-flagged-medium', 'bot-reply-flagged-slop');
   });
   document.querySelectorAll('[data-bot-verdict]').forEach(el => {
     delete el.dataset.botVerdict;
