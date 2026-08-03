@@ -1,24 +1,33 @@
 name: CI
 
+# CI economics: PR as the independent proof — no duplicate post-merge push run.
+# See ai/shared/AGENTS.md → "CI economics" and projects/templates/github-workflows.
 on:
-  push:
-    branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
-    
+    name: Validate
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Validate manifest.json
         run: |
           echo "Validating manifest.json..."
           cat manifest.json | jq empty
           echo "✓ manifest.json is valid JSON"
-      
+
       - name: Check JS syntax
         run: |
           echo "Checking JavaScript syntax..."

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { classifyBatchReplies } from "../lib/anthropic.js";
 import { getCachedVerdict, setCachedVerdict } from "../lib/cache.js";
+import { localClassifyReply } from "../lib/localFilter.js";
 import type { BotVerdict, ClassifyRequest, ClassifyResponse, ReplyData } from "../types.js";
 
 const app = new Hono();
@@ -18,36 +19,46 @@ app.post("/", async (c) => {
 			return c.json({ error: "Maximum 5 replies per batch" }, 400);
 		}
 
-		// Check cache for each reply
 		const results: { index: number; verdict: BotVerdict | null }[] = [];
-		const uncached: { index: number; reply: ReplyData }[] = [];
+		const needAi: { index: number; reply: ReplyData }[] = [];
 
 		for (let i = 0; i < replies.length; i++) {
-			const reply = replies[i];
-			const cached = getCachedVerdict(reply.username);
+			const reply = normalizeReply(replies[i]);
 
+			// 1) Server local template filter (free)
+			const local = localClassifyReply(reply);
+			if (local) {
+				setCachedVerdict(cacheKey(reply), local);
+				results.push({ index: i, verdict: local });
+				continue;
+			}
+
+			// 2) LRU cache (shared, non-personalized)
+			const cached = getCachedVerdict(cacheKey(reply));
 			if (cached) {
 				results.push({ index: i, verdict: cached });
-			} else {
-				uncached.push({ index: i, reply });
+				continue;
 			}
+
+			needAi.push({ index: i, reply });
 		}
 
-		// Process uncached replies with AI
-		if (uncached.length > 0) {
-			const uncachedReplies = uncached.map((u) => u.reply);
-			const aiVerdicts = await classifyBatchReplies(uncachedReplies);
+		// 3) AI for the rest
+		if (needAi.length > 0) {
+			const aiVerdicts = await classifyBatchReplies(needAi.map((u) => u.reply));
 
-			uncached.forEach((item, i) => {
+			needAi.forEach((item, i) => {
 				const verdict = aiVerdicts[i];
 				if (verdict) {
-					setCachedVerdict(item.reply.username, verdict);
+					setCachedVerdict(cacheKey(item.reply), verdict);
 				}
-				results.push({ index: item.index, verdict: verdict ?? createFallbackVerdict() });
+				results.push({
+					index: item.index,
+					verdict: verdict ?? createFallbackVerdict(),
+				});
 			});
 		}
 
-		// Sort by original index and extract verdicts
 		results.sort((a, b) => a.index - b.index);
 		const verdicts = results.map((r) => r.verdict!);
 
@@ -58,9 +69,43 @@ app.post("/", async (c) => {
 	}
 });
 
+/** Include short content hash so different replies from same user aren't fully collapsed */
+function cacheKey(reply: ReplyData): string {
+	const user = String(reply.username || "").toLowerCase();
+	const text = String(reply.replyText || "")
+		.slice(0, 64)
+		.toLowerCase();
+	let h = 0;
+	for (let i = 0; i < text.length; i++) {
+		h = (Math.imul(31, h) + text.charCodeAt(i)) | 0;
+	}
+	return `${user}:${(h >>> 0).toString(16)}`;
+}
+
+function normalizeReply(r: Partial<ReplyData>): ReplyData {
+	return {
+		username: String(r.username || "").toLowerCase(),
+		displayName: String(r.displayName || r.username || ""),
+		replyText: String(r.replyText || ""),
+		originalTweetText: String(r.originalTweetText || ""),
+		bio: String(r.bio || ""),
+		followers: Number(r.followers) || 0,
+		following: Number(r.following) || 0,
+		accountCreatedAt: String(r.accountCreatedAt || ""),
+		hasCustomAvatar: r.hasCustomAvatar ?? true,
+		isVerified: Boolean(r.isVerified),
+		location: r.location ?? null,
+		secondsAfterOriginal: Number(r.secondsAfterOriginal) || 0,
+		heuristicScore: Number(r.heuristicScore) || 0,
+		userFollows: false,
+		mutualCount: 0,
+	};
+}
+
 function createFallbackVerdict(): BotVerdict {
 	return {
 		isBot: false,
+		isSlop: false,
 		confidence: 0,
 		category: "genuine",
 		reason: "Classification failed, defaulting to genuine",

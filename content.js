@@ -27,6 +27,7 @@ const BOT_TOGGLE_KEY = 'bot_detection_enabled';
 const BOT_SENSITIVITY_KEY = 'bot_sensitivity';
 let botDetectionEnabled = true;
 let botSensitivity = 3;
+let pageScriptInjected = false;
 
 // Processing
 const PROCESS_THROTTLE = 2000;
@@ -226,6 +227,9 @@ function saveCacheEntry(username, location) {
 }
 
 function injectPageScript() {
+  if (pageScriptInjected) return;
+  pageScriptInjected = true;
+
   const script = document.createElement('script');
   script.src = chrome.runtime.getURL('pageScript.js');
   script.onload = function() { this.remove(); };
@@ -829,7 +833,9 @@ function setupObservers() {
 }
 
 // ============================================================================
-// BOT DETECTION - Simplified (Server does all scoring)
+// BOT DETECTION
+// Local trust/templates first → backend AI only when needed
+// Zero extra X profile API calls (passive intercept cache only)
 // ============================================================================
 
 let botProcessingScheduled = false;
@@ -853,11 +859,10 @@ function scheduleBotProcessing() {
 async function processBotDetectionBatch() {
   if (!botDetectionEnabled) return;
   
-  // Select ALL tweet articles - this includes OP and all replies
   const unprocessed = document.querySelectorAll('article[data-testid="tweet"]:not([data-bot-processed])');
   if (unprocessed.length === 0) return;
   
-  // Only process visible + near-visible tweets
+  // Only visible + near-visible — don't burn work off-screen
   const visible = Array.from(unprocessed).filter(el => {
     const rect = el.getBoundingClientRect();
     return rect.top < window.innerHeight + 300 && rect.bottom > -100;
@@ -865,77 +870,135 @@ async function processBotDetectionBatch() {
   
   if (visible.length === 0) return;
   
-  // Process tweets in parallel
-  const batch = visible.slice(0, 8);
+  // Smaller concurrent batch = less main-thread + backend spikes
+  const batch = visible.slice(0, 6);
   const promises = batch.map(el => processBotDetection(el));
   await Promise.allSettled(promises);
   
-  // Schedule more if needed
-  if (visible.length > 8) {
-    setTimeout(scheduleBotProcessing, 50);
+  if (visible.length > 6) {
+    setTimeout(scheduleBotProcessing, 120);
   }
+}
+
+/**
+ * Passive profile enrichment from pageScript's intercept cache.
+ * Never triggers a UserByScreenName call — if not already cached, skip fields.
+ */
+function getPassiveUserData(username) {
+  return new Promise((resolve) => {
+    const requestId = Date.now() + Math.random();
+    let done = false;
+
+    const handler = (event) => {
+      if (event.source !== window) return;
+      if (event.data?.type === '__userDataResponse' && event.data.requestId === requestId) {
+        done = true;
+        window.removeEventListener('message', handler);
+        resolve(event.data.userData || null);
+      }
+    };
+
+    window.addEventListener('message', handler);
+    window.postMessage({ type: '__getUserData', username, requestId }, '*');
+
+    // Very short wait — never stall the pipeline for missing cache
+    setTimeout(() => {
+      if (!done) {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }
+    }, 80);
+  });
+}
+
+function dimThresholdForSensitivity() {
+  // sensitivity 1..5 → lower = more aggressive dimming
+  // 1: 0.9, 3: 0.7, 5: 0.55
+  const s = Number(botSensitivity) || 3;
+  return Math.max(0.5, Math.min(0.95, 1.05 - s * 0.1));
 }
 
 async function processBotDetection(el) {
   if (!botDetectionEnabled) return;
-  // Allow reprocessing of errored tweets
   const status = el.dataset.botProcessed;
   if (status && status !== 'error') return;
   el.dataset.botProcessed = 'processing';
+  el.dataset.botDimThreshold = String(dimThresholdForSensitivity());
   
   const username = extractUsername(el);
   if (!username) {
     el.dataset.botProcessed = 'skip';
     return;
   }
-  
-  // Whitelist check
-  if (window.BotCache?.isWhitelisted?.(username)) {
-    el.dataset.botProcessed = 'whitelisted';
-    return;
-  }
-  
-  // Cache check - apply immediately if cached
-  const cached = window.BotCache?.getCachedVerdict?.(username);
-  if (cached) {
-    // Apply UI for BOTH humans and bots (show scores)
-    window.BotUI?.applyBotUI?.(el, cached, username);
-    el.dataset.botProcessed = cached.isBot ? 'bot' : 'human';
-    return;
-  }
-  
-  // Extract data from DOM
+
+  // Extract DOM data first (cheap)
   const replyData = extractReplyData(el, username);
   if (!replyData) {
     el.dataset.botProcessed = 'skip';
     return;
   }
-  
-  // Quick local checks (verified, substantive replies)
-  const quickCheck = window.BotDetection?.shouldClassify?.(replyData, false, false);
+
+  // Trust signals (in-memory following set — no network)
+  const userFollows = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
+  replyData.userFollows = userFollows;
+  replyData.trustTier = userFollows ? 'following' : 'none';
+  replyData.mutualCount = 0;
+
+  // Whitelist / override / follow hard-trust / cache / local template — all offline
+  const local = window.BotCache?.resolveLocally?.(username, replyData, { userFollows });
+  if (local) {
+    if (local.source !== 'cache' && !local.expiry) {
+      window.BotCache?.saveBotCache?.(username, local);
+    }
+    window.BotUI?.applyBotUI?.(el, local, username);
+    el.dataset.botProcessed = local.isBot ? 'bot' : (local.isSlop ? 'slop' : 'human');
+    el.dataset.botUsername = username.toLowerCase();
+    return;
+  }
+
+  // Optional: enrich from passive intercept cache only (no X API)
+  const passive = await getPassiveUserData(username);
+  if (passive) {
+    if (passive.bio) replyData.bio = String(passive.bio).slice(0, 400);
+    if (passive.followers) replyData.followers = Number(passive.followers) || 0;
+    if (passive.following) replyData.following = Number(passive.following) || 0;
+    if (passive.createdAt) replyData.accountCreatedAt = passive.createdAt;
+    if (passive.displayName) replyData.displayName = passive.displayName;
+    if (typeof passive.hasCustomAvatar === 'boolean') {
+      replyData.hasCustomAvatar = passive.hasCustomAvatar;
+    }
+    if (passive.verified) replyData.isVerified = true;
+    if (passive.location) replyData.location = passive.location;
+  }
+
+  const quickCheck = window.BotDetection?.shouldClassify?.(
+    replyData,
+    window.BotCache?.isWhitelisted?.(username)
+  );
   if (quickCheck?.action === 'skip') {
     el.dataset.botProcessed = 'skip';
     return;
   }
   
-  // OPTIMISTIC UI: Show skeleton immediately while waiting for server
   el.dataset.botProcessed = 'pending';
   el.dataset.botUsername = username.toLowerCase();
   window.BotUI?.showPending?.(el, username);
   
   try {
     const verdict = await window.BotCache?.queueForClassification?.(username, replyData);
-    // Resolve: replace skeleton with final verdict (show for BOTH humans and bots)
     window.BotUI?.resolvePending?.(el, verdict, username);
-    el.dataset.botProcessed = verdict?.isBot ? 'bot' : 'human';
+    el.dataset.botProcessed = verdict?.isBot ? 'bot' : (verdict?.isSlop ? 'slop' : 'human');
   } catch {
-    // Remove skeleton on error
     el.querySelector?.('[data-bot-skeleton]')?.remove?.();
     el.dataset.botProcessed = 'error';
   }
 }
 
 function extractReplyData(el, username) {
+  // Prefer shared extractor so local filter + server share one shape
+  if (window.BotDetection?.extractReplyDataFromElement) {
+    return window.BotDetection.extractReplyDataFromElement(el, username);
+  }
   try {
     const userNameContainer = el.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
     let displayName = username;
@@ -964,13 +1027,15 @@ function extractReplyData(el, username) {
       username,
       displayName,
       replyText,
+      originalTweetText: '',
       bio: '',
       followers: 0,
       following: 0,
       hasCustomAvatar,
       isVerified,
       userFollows: false,
-      mutualCount: 0
+      mutualCount: 0,
+      trustTier: 'none',
     };
   } catch {
     return null;
@@ -1063,18 +1128,35 @@ async function init() {
   // Early return only if BOTH features are disabled
   if (!extensionEnabled && !botDetectionEnabled) return;
   
-  // pageScript is needed for location data - only inject if location is enabled
-  if (extensionEnabled) {
-    injectLocationStyles();
+  // pageScript: passive user intercept + following list + location
+  // Needed for bot legitimacy even when location flags are off
+  if (extensionEnabled || botDetectionEnabled) {
+    if (extensionEnabled) injectLocationStyles();
     injectPageScript();
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 400));
   }
 
-  // Bot detection setup (independent of location)
+  // Bot detection setup
   if (botDetectionEnabled) {
     window.BotUI?.injectBotStyles?.();
     await window.BotCache?.loadBotCache?.();
     await window.BotCache?.loadWhitelist?.();
+    // Following list: cache-first, background paginate (never blocks UI)
+    window.BotLegitimacy?.initLegitimacy?.().catch?.(() => {});
+
+    // When following pages land, soft-correct any already-processed tweets
+    // for accounts you follow (no extra X/API calls — pure local trust).
+    window.addEventListener('botFollowingUpdated', () => {
+      document.querySelectorAll('article[data-testid="tweet"][data-bot-username]').forEach((el) => {
+        const u = el.dataset.botUsername;
+        if (!u || !window.BotLegitimacy?.isFollowedByUser?.(u)) return;
+        if (el.dataset.botProcessed === 'human' || el.dataset.botProcessed === 'whitelisted') return;
+        const verdict = window.BotLegitimacy.createFollowTrustVerdict(u);
+        window.BotCache?.saveBotCache?.(u, verdict);
+        window.BotUI?.applyBotUI?.(el, verdict, u);
+        el.dataset.botProcessed = 'human';
+      });
+    });
   }
   
   // Setup observers - they internally check each feature's enabled state

@@ -9,13 +9,13 @@ const cache = new LRUCache<string, BotVerdict>({
 	ttl: CACHE_TTL_MS,
 });
 
-export function getCachedVerdict(username: string): BotVerdict | null {
-	const verdict = cache.get(username.toLowerCase());
+export function getCachedVerdict(key: string): BotVerdict | null {
+	const verdict = cache.get(String(key || "").toLowerCase());
 	return verdict ?? null;
 }
 
-export function setCachedVerdict(username: string, verdict: BotVerdict): void {
-	cache.set(username.toLowerCase(), { ...verdict, source: "cache" });
+export function setCachedVerdict(key: string, verdict: BotVerdict): void {
+	cache.set(String(key || "").toLowerCase(), { ...verdict, source: "cache" });
 }
 
 export function getCacheStats() {

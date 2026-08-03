@@ -23,16 +23,17 @@ x-account-location/
 
 ## Key Design Decisions
 
-### Server-Side Classification
-**All scoring happens on the server** via Claude Haiku. Client only:
-1. Extracts DOM data (username, display name, reply text, avatar, verified)
-2. Checks whitelist/cache
-3. Sends to server for AI classification
+### Hybrid Classification (client-first, server fallback)
+**Resolve offline first**, then Haiku only when needed:
+1. Personal override / whitelist
+2. **Follow hard-trust** (accounts you follow never hit the multi-tenant API)
+3. Verdict cache + account reputation prior
+4. Local template prefilter (vapid phrases / LLM filler)
+5. Passive profile fields from intercepted X traffic (no extra UserByScreenName)
+6. Server: local filter → LRU → Claude Haiku
 
-This avoids:
-- Client-side performance issues from complex pattern matching
-- Fragile regex/heuristic maintenance
-- Hammering Twitter's DOM with excessive processing
+Following list is paginated slowly in the background (capped pages, delays) and cached 24h.
+`userFollows` is client-only so shared server cache stays non-personalized.
 
 ### Performance Optimizations
 - **Debounced observers**: 300ms mutation, 500ms scroll

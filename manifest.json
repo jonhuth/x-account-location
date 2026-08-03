@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "X Account Tools",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Bot detection, location flags, and tools for X/Twitter",
   "permissions": [
     "activeTab",
