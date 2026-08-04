@@ -503,7 +503,12 @@ const LOCATION_UI_STYLES = `
 .xat-flag,
 .xat-flag-shimmer {
   box-sizing: border-box;
-  flex: 0 0 auto;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  width: max-content !important;
+  max-width: max-content !important;
   font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -520,11 +525,13 @@ const LOCATION_UI_STYLES = `
   font-size: 14px;
   color: inherit;
   user-select: none;
+  white-space: nowrap;
 }
 
 .xat-flag--text {
   height: 18px;
-  max-width: 7.5em;
+  max-width: 7.5em !important;
+  width: max-content !important;
   padding: 0 6px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -540,7 +547,9 @@ const LOCATION_UI_STYLES = `
 
 .xat-flag-shimmer {
   display: inline-block;
-  width: 16px;
+  width: 16px !important;
+  max-width: 16px !important;
+  min-width: 16px !important;
   height: 12px;
   margin: 0 2px 0 4px;
   vertical-align: middle;

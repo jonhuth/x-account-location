@@ -6,18 +6,25 @@
 // ============================================================================
 
 const BOT_UI_STYLES = `
-/* Shared chip base — matches X username density */
+/* Shared chip base — matches X username density.
+   X's User-Name row is flex; without fixed sizing, chips can stretch
+   to the full width of the display-name flex item. */
 .bot-badge,
 .bot-hide-btn,
 .bot-skeleton {
   box-sizing: border-box;
-  flex: 0 0 auto;
-  max-width: none;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  width: max-content !important;
+  max-width: max-content !important;
+  min-width: 0;
   font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Bot score chip */
+/* Bot score chip — content-sized pill, never full-row width */
 .bot-badge {
   display: inline-flex;
   align-items: center;
@@ -34,6 +41,7 @@ const BOT_UI_STYLES = `
   letter-spacing: 0;
   vertical-align: middle;
   white-space: nowrap;
+  overflow: hidden;
   cursor: pointer;
   user-select: none;
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
@@ -85,7 +93,10 @@ const BOT_UI_STYLES = `
   background: rgba(113, 118, 123, 0.12);
   border-color: rgba(113, 118, 123, 0.25);
   color: #71767b;
-  min-width: 28px;
+  min-width: 28px !important;
+  width: 28px !important;
+  max-width: 28px !important;
+  padding: 0;
 }
 
 /* Hide-again chip */
@@ -261,7 +272,9 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
 
 .bot-skeleton {
   display: inline-block;
-  width: 32px;
+  width: 32px !important;
+  max-width: 32px !important;
+  min-width: 32px !important;
   height: 14px;
   margin-left: 4px;
   vertical-align: middle;
