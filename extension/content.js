@@ -151,20 +151,28 @@ function calculateExpiry(location, now = Date.now()) {
 }
 
 async function canWriteToStorage() {
-  if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) return false;
+  if (!isExtensionContextValid()) return false;
+  // Safari (and some engines) omit getBytesInUse — allow writes when quota API is missing.
+  // Returning false here previously blocked all location-cache persistence on Safari.
+  if (typeof chrome.storage?.local?.getBytesInUse !== 'function') return true;
   try {
     const bytesUsed = await chrome.storage.local.getBytesInUse(null);
     return Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100) < STORAGE_LOG_THRESHOLD;
-  } catch { return false; }
+  } catch {
+    // Prefer attempting a write over silently dropping cache on quota probe failures.
+    return true;
+  }
 }
 
 async function checkStorageUsage() {
   try {
-    if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) return null;
+    if (!isExtensionContextValid() || typeof chrome.storage?.local?.getBytesInUse !== 'function') {
+      return null;
+    }
     const bytesUsed = await chrome.storage.local.getBytesInUse(null);
     const percentUsed = Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100);
     const logThreshold = Math.floor(percentUsed / 10) * 10;
-    if ((logThreshold > lastLoggedStoragePercent && logThreshold >= 10) || 
+    if ((logThreshold > lastLoggedStoragePercent && logThreshold >= 10) ||
         (percentUsed >= STORAGE_LOG_THRESHOLD && lastLoggedStoragePercent < STORAGE_LOG_THRESHOLD)) {
       lastLoggedStoragePercent = logThreshold;
     }
