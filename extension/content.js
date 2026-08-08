@@ -493,7 +493,7 @@ function insertFlagElement(container, flagSpan, screenName) {
   } catch { return false; }
 }
 
-// Compact location chips — vanilla CSS, no external deps
+// Location chips — shared density with bot chips, content-sized for X flex rows
 const LOCATION_UI_STYLES = `
 @keyframes xat-shimmer {
   0% { background-position: 200% 0; }
@@ -518,7 +518,8 @@ const LOCATION_UI_STYLES = `
   align-items: center;
   justify-content: center;
   height: 18px;
-  margin: 0 2px 0 4px;
+  min-height: 18px;
+  margin: 0 0 0 3px;
   padding: 0 2px;
   vertical-align: middle;
   line-height: 1;
@@ -540,7 +541,7 @@ const LOCATION_UI_STYLES = `
   border: 1px solid rgba(113, 118, 123, 0.3);
   background: rgba(113, 118, 123, 0.1);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: 0.01em;
   color: #71767b;
 }
@@ -551,7 +552,7 @@ const LOCATION_UI_STYLES = `
   max-width: 16px !important;
   min-width: 16px !important;
   height: 12px;
-  margin: 0 2px 0 4px;
+  margin: 0 0 0 3px;
   vertical-align: middle;
   border-radius: 999px;
   background: linear-gradient(
