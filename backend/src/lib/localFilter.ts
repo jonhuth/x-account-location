@@ -79,89 +79,147 @@ function verdict(partial: Omit<BotVerdict, "source"> & { source?: BotVerdict["so
 
 export function localClassifyReply(reply: ReplyData): BotVerdict | null {
 	const text = String(reply.replyText || "").trim();
-	if (!text) return null;
 
-	const normalized = text.toLowerCase().replace(/["']/g, "").replace(/\s+/g, " ").trim();
-	const stripped = normalized.replace(/[.!?…]+$/g, "").trim();
+	if (text) {
+		const normalized = text.toLowerCase().replace(/["']/g, "").replace(/\s+/g, " ").trim();
+		const stripped = normalized.replace(/[.!?…]+$/g, "").trim();
 
-	if (EXACT_SLOP.has(stripped) || EXACT_SLOP.has(normalized)) {
-		return verdict({
-			isBot: true,
-			isSlop: true,
-			confidence: 0.88,
-			category: "sycophant",
-			reason: "Generic engagement phrase with no substance",
-			signals: ["server_local_exact"],
-		});
-	}
-
-	for (const re of SLOP_PATTERNS) {
-		if (re.test(text) || re.test(normalized)) {
+		if (EXACT_SLOP.has(stripped) || EXACT_SLOP.has(normalized)) {
 			return verdict({
 				isBot: true,
 				isSlop: true,
-				confidence: 0.82,
+				confidence: 0.88,
 				category: "sycophant",
-				reason: "Matches known engagement-farm reply pattern",
-				signals: ["server_local_pattern"],
+				reason: "Generic engagement phrase with no substance",
+				signals: ["server_local_exact"],
 			});
 		}
-	}
 
-	// Emoji-only replies (no letters/digits)
-	if (text.length <= 24 && !/[a-z0-9]/i.test(text) && /[\u{1F300}-\u{1FAFF}]/u.test(text)) {
-		return verdict({
-			isBot: true,
-			isSlop: true,
-			confidence: 0.8,
-			category: "sycophant",
-			reason: "Emoji-only engagement reply",
-			signals: ["server_local_emoji"],
-		});
-	}
+		for (const re of SLOP_PATTERNS) {
+			if (re.test(text) || re.test(normalized)) {
+				return verdict({
+					isBot: true,
+					isSlop: true,
+					confidence: 0.82,
+					category: "sycophant",
+					reason: "Matches known engagement-farm reply pattern",
+					signals: ["server_local_pattern"],
+				});
+			}
+		}
 
-	const tokens = stripped.split(/\s+/).filter(Boolean);
-	if (
-		tokens.length > 0 &&
-		tokens.length <= 2 &&
-		text.length <= 16 &&
-		!/[?]/.test(text) &&
-		/^(yes|yep|yeah|yup|true|real|facts|this|same|agreed|agree|correct|exactly|based|valid|w|fire)$/i.test(stripped)
-	) {
-		return verdict({
-			isBot: true,
-			isSlop: true,
-			confidence: 0.78,
-			category: "sycophant",
-			reason: "Ultra-short vapid agreement",
-			signals: ["server_local_short"],
-		});
-	}
-
-	for (const re of LLM_SLOP_PATTERNS) {
-		if (re.test(text)) {
+		if (text.length <= 24 && !/[a-z0-9]/i.test(text) && /[\u{1F300}-\u{1FAFF}]/u.test(text)) {
 			return verdict({
-				isBot: false,
+				isBot: true,
 				isSlop: true,
-				confidence: 0.72,
-				category: "llm_slop",
-				reason: "Reads like generic LLM filler",
-				signals: ["server_local_llm_slop"],
+				confidence: 0.8,
+				category: "sycophant",
+				reason: "Emoji-only engagement reply",
+				signals: ["server_local_emoji"],
 			});
+		}
+
+		const tokens = stripped.split(/\s+/).filter(Boolean);
+		if (
+			tokens.length > 0 &&
+			tokens.length <= 2 &&
+			text.length <= 16 &&
+			!/[?]/.test(text) &&
+			/^(yes|yep|yeah|yup|true|real|facts|this|same|agreed|agree|correct|exactly|based|valid|w|fire)$/i.test(
+				stripped,
+			)
+		) {
+			return verdict({
+				isBot: true,
+				isSlop: true,
+				confidence: 0.78,
+				category: "sycophant",
+				reason: "Ultra-short vapid agreement",
+				signals: ["server_local_short"],
+			});
+		}
+
+		for (const re of LLM_SLOP_PATTERNS) {
+			if (re.test(text)) {
+				return verdict({
+					isBot: false,
+					isSlop: true,
+					confidence: 0.72,
+					category: "llm_slop",
+					reason: "Reads like generic LLM filler",
+					signals: ["server_local_llm_slop"],
+				});
+			}
 		}
 	}
 
-	// Cheap profile heuristic (only when data present)
-	const followers = Number(reply.followers) || 0;
-	const following = Number(reply.following) || 0;
-	if (following > 500 && followers > 0 && following / followers >= 20 && text.length < 80 && !/[?]/.test(text)) {
+	// Follow/follower ratio — high signal even without reply text
+	const ratioHit = classifyFollowRatio(reply);
+	if (ratioHit) return ratioHit;
+
+	return null;
+}
+
+/**
+ * following >> followers is a strong bot/farm prior (mass-follow to fish follows).
+ * Keep in sync with extension/botDetection.js classifyFollowRatio.
+ */
+export function classifyFollowRatio(reply: ReplyData): BotVerdict | null {
+	const followers = Math.max(0, Number(reply.followers) || 0);
+	const following = Math.max(0, Number(reply.following) || 0);
+	if (following < 150) return null;
+
+	const ratio = following / Math.max(followers, 1);
+	const text = String(reply.replyText || "").trim();
+	const thin = text.length > 0 && text.length < 120 && !/[?]/.test(text);
+	const veryThin = text.length > 0 && text.length < 60;
+	const ratioLabel = `${Math.round(ratio)}:1`;
+
+	if (following >= 1500 && followers < 200) {
 		return verdict({
 			isBot: true,
 			isSlop: true,
-			confidence: 0.7,
+			confidence: veryThin ? 0.92 : 0.88,
 			category: "airdrop_farmer",
-			reason: "Extreme following/followers ratio with thin reply",
-			signals: ["server_local_ratio"],
+			reason: `Follow-farm profile: following ${following} vs ${followers} followers (${ratioLabel})`,
+			signals: [
+				"server_ratio_mass_follow",
+				`following_${following}`,
+				`followers_${followers}`,
+			],
+		});
+	}
+
+	if (following >= 400 && ratio >= 20) {
+		return verdict({
+			isBot: true,
+			isSlop: true,
+			confidence: veryThin ? 0.9 : 0.84,
+			category: "airdrop_farmer",
+			reason: `Extreme following/followers ratio (${ratioLabel}) — follow-to-get-followed pattern`,
+			signals: ["server_ratio_extreme", `ratio_${Math.round(ratio)}`],
+		});
+	}
+
+	if (following >= 300 && ratio >= 12) {
+		return verdict({
+			isBot: true,
+			isSlop: true,
+			confidence: thin ? 0.8 : 0.74,
+			category: "airdrop_farmer",
+			reason: `High following/followers ratio (${ratioLabel}) typical of follow-farm accounts`,
+			signals: ["server_ratio_high", `ratio_${Math.round(ratio)}`],
+		});
+	}
+
+	if (following >= 200 && ratio >= 8 && (veryThin || (thin && !reply.isVerified))) {
+		return verdict({
+			isBot: true,
+			isSlop: true,
+			confidence: 0.72,
+			category: "engagement_farmer",
+			reason: `Elevated follow ratio (${ratioLabel}) with thin engagement-style reply`,
+			signals: ["server_ratio_elevated", "server_thin_reply"],
 		});
 	}
 

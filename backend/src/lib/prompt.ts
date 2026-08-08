@@ -68,11 +68,14 @@ Vapid reply patterns:
 - Humor, sarcasm, personality
 - Typos with substantive content
 
-## PROFILE SIGNALS (when present)
-- following >> followers (esp. new accounts) → airdrop/farm prior
-- default avatar → mild farm prior
-- verified → mild friction (paid), not a free pass
-- missing/unknown data = NEUTRAL (do not invent)
+## PROFILE SIGNALS (when present) — HIGH WEIGHT
+- following >> followers is a STRONG bot/farm signal (follow-to-get-followed). Examples:
+  - following 2000+ with <200 followers
+  - following/followers ratio ≥ 12–20x with meaningful following count
+  - Mass following + thin generic replies → almost always airdrop_farmer / engagement_farmer
+- default avatar → mild farm prior (stacks with ratio)
+- verified → mild friction (paid), not a free pass over extreme ratio
+- missing/unknown follower counts = NEUTRAL (do not invent)
 
 ## RULES
 1. Missing/unknown data = NEUTRAL (don't penalize)
@@ -97,8 +100,14 @@ function formatReplyBlock(r: ReplyData, i: number): string {
 		parts.push(`Original tweet: "${String(r.originalTweetText).slice(0, 400)}"`);
 	}
 	if (r.bio) parts.push(`Bio: "${String(r.bio).slice(0, 280)}"`);
-	if (r.followers > 0) parts.push(`Followers: ${r.followers}`);
-	if (r.following > 0) parts.push(`Following: ${r.following}`);
+	if (r.followers > 0 || r.following > 0) {
+		parts.push(`Followers: ${r.followers}`);
+		parts.push(`Following: ${r.following}`);
+		if (r.following > 0) {
+			const ratio = r.following / Math.max(r.followers, 1);
+			parts.push(`Follow ratio (following/followers): ${ratio.toFixed(1)}x`);
+		}
+	}
 	if (r.accountCreatedAt) parts.push(`Created: ${r.accountCreatedAt}`);
 	if (r.isVerified) parts.push("Verified: true");
 	if (r.hasCustomAvatar === false) parts.push("Default avatar: true");

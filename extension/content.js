@@ -998,8 +998,9 @@ async function processBotDetection(el) {
   const passive = await getPassiveUserData(username);
   if (passive) {
     if (passive.bio) replyData.bio = String(passive.bio).slice(0, 400);
-    if (passive.followers) replyData.followers = Number(passive.followers) || 0;
-    if (passive.following) replyData.following = Number(passive.following) || 0;
+    // Use != null so 0 followers still counts for ratio (common on farm alts)
+    if (passive.followers != null) replyData.followers = Number(passive.followers) || 0;
+    if (passive.following != null) replyData.following = Number(passive.following) || 0;
     if (passive.createdAt) replyData.accountCreatedAt = passive.createdAt;
     if (passive.displayName) replyData.displayName = passive.displayName;
     if (typeof passive.hasCustomAvatar === 'boolean') {
@@ -1024,10 +1025,32 @@ async function processBotDetection(el) {
     return;
   }
 
-  // Refresh stamps for local filter if we re-resolve later
+  // Refresh stamps after passive enrichment
   replyData.userFollows = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
   replyData.trustTier = window.BotLegitimacy?.getTrustTier?.(username) || 'none';
   replyData.mutualCount = window.BotLegitimacy?.isMutualWithUser?.(username) ? 1 : 0;
+
+  // Re-resolve with followers/following — ratio is a high local bot signal
+  if (replyData.followers > 0 || replyData.following > 0) {
+    const afterPassive = window.BotCache?.resolveLocally?.(username, replyData, {
+      userFollows: replyData.userFollows,
+      isMutual: replyData.mutualCount > 0,
+      trustTier: replyData.trustTier,
+    });
+    if (afterPassive) {
+      if (afterPassive.source !== 'cache' && !afterPassive.expiry) {
+        window.BotCache?.saveBotCache?.(username, afterPassive);
+      }
+      window.BotUI?.applyBotUI?.(el, afterPassive, username);
+      el.dataset.botProcessed = afterPassive.isBot
+        ? 'bot'
+        : afterPassive.isSlop
+          ? 'slop'
+          : 'human';
+      el.dataset.botUsername = username.toLowerCase();
+      return;
+    }
+  }
 
   const quickCheck = window.BotDetection?.shouldClassify?.(
     replyData,
