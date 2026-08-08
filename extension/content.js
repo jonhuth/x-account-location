@@ -449,48 +449,43 @@ function findHandleSection(container, screenName) {
   });
 }
 
+function getUserNameRootForFlags(from) {
+  if (window.BotUI?.getUserNameRoot) return window.BotUI.getUserNameRoot(from);
+  if (!from) return null;
+  if (from.matches?.('[data-testid="UserName"], [data-testid="User-Name"]')) return from;
+  return (
+    from.querySelector?.('[data-testid="UserName"], [data-testid="User-Name"]') ||
+    from.closest?.('[data-testid="UserName"], [data-testid="User-Name"]') ||
+    null
+  );
+}
+
 function insertFlagElement(container, flagSpan, screenName) {
-  // Layout goal: [DisplayName] [VerifiedBadge] [Flag] [BotBadge] [@handle] [time]
-  // We want the flag to appear after the display name but before the bot badge
-  
-  // PRIORITY 1: After display name link (NOT the @handle link)
-  const allLinks = container.querySelectorAll('a[href^="/"]');
-  for (const link of allLinks) {
+  // Same first-line host as bot chips: [Name] [Verified] [flag][badge] [@handle]
+  injectLocationStyles();
+  if (window.BotUI?.insertIntoChipHost) {
+    const kind = flagSpan.hasAttribute('data-twitter-flag-shimmer') ? 'shimmer' : 'flag';
+    if (window.BotUI.insertIntoChipHost(container, flagSpan, screenName, kind)) {
+      return true;
+    }
+  }
+  // Fallback without BotUI: after display name on first flex row only
+  const root = getUserNameRootForFlags(container) || container;
+  const links = root.querySelectorAll('a[href^="/"]');
+  for (const link of links) {
     const text = link.textContent?.trim() || '';
-    // Skip @handle links
-    if (text.startsWith('@')) continue;
-    // Skip time/date links
-    if (link.querySelector('time')) continue;
-    // This should be the display name link - insert flag after it
+    if (text.startsWith('@') || link.querySelector('time')) continue;
     try {
       link.after(flagSpan);
       return true;
     } catch { /* continue */ }
   }
-  
-  // PRIORITY 2: Before existing bot badge (if display name link wasn't found)
-  const existingBotBadge = container.querySelector('[data-bot-badge]');
-  if (existingBotBadge) {
-    try { 
-      existingBotBadge.before(flagSpan); 
-      return true; 
-    } catch { /* continue */ }
+  try {
+    root.appendChild(flagSpan);
+    return true;
+  } catch {
+    return false;
   }
-  
-  // PRIORITY 3: Before bot skeleton (loading state)
-  const botSkeleton = container.querySelector('[data-bot-skeleton]');
-  if (botSkeleton) {
-    try { 
-      botSkeleton.before(flagSpan); 
-      return true; 
-    } catch { /* continue */ }
-  }
-  
-  // FALLBACK: Append as first child
-  try { 
-    container.insertBefore(flagSpan, container.firstChild?.nextSibling || null); 
-    return true; 
-  } catch { return false; }
 }
 
 // Location chips — shared density with bot chips, content-sized for X flex rows
@@ -498,6 +493,26 @@ const LOCATION_UI_STYLES = `
 @keyframes xat-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+/* Host styles also live in botUI; keep a copy so flags work if bots disabled */
+.xat-chip-host {
+  box-sizing: border-box;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-items: center !important;
+  align-self: center !important;
+  gap: 2px;
+  margin: 0 0 0 2px;
+  width: max-content !important;
+  max-width: max-content !important;
+  white-space: nowrap !important;
+  vertical-align: middle;
+  line-height: 1;
+  position: static !important;
 }
 
 .xat-flag,
@@ -601,18 +616,12 @@ async function addFlagToUsername(usernameElement, screenName) {
   }
 
   usernameElement.dataset.flagAdded = 'processing';
-  const userNameContainer = usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
+  const userNameContainer = getUserNameRootForFlags(usernameElement);
   const shimmerSpan = createLoadingShimmer();
   let shimmerInserted = false;
-  
+
   if (userNameContainer) {
-    const handleSection = findHandleSection(userNameContainer, screenName);
-    if (handleSection?.parentNode) {
-      try { handleSection.parentNode.insertBefore(shimmerSpan, handleSection); shimmerInserted = true; } catch { /* ignore */ }
-    }
-    if (!shimmerInserted) {
-      try { userNameContainer.appendChild(shimmerSpan); shimmerInserted = true; } catch { /* ignore */ }
-    }
+    shimmerInserted = insertFlagElement(userNameContainer, shimmerSpan, screenName);
   }
   
   try {
@@ -655,11 +664,13 @@ function processUsernamesThrottled() {
 }
 
 function addFlagToElement(usernameElement, screenName, locationInfo) {
-  if (usernameElement.querySelector('[data-twitter-flag]')) return true;
   if (!locationInfo?.location) return false;
-
-  const containerForFlag = usernameElement.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
-  if (!containerForFlag) return false;
+  const root = getUserNameRootForFlags(usernameElement);
+  if (!root) return false;
+  if (root.querySelector('[data-twitter-flag]')) {
+    usernameElement.dataset.flagAdded = 'true';
+    return true;
+  }
 
   injectLocationStyles();
 
@@ -674,7 +685,7 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
   flagSpan.setAttribute('title', locationInfo.location);
   flagSpan.setAttribute('aria-label', `Account based in ${locationInfo.location}`);
 
-  if (insertFlagElement(containerForFlag, flagSpan, screenName)) {
+  if (insertFlagElement(root, flagSpan, screenName)) {
     usernameElement.dataset.flagAdded = 'true';
     updateStats(screenName, locationInfo.location);
     return true;
