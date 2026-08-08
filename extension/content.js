@@ -956,14 +956,23 @@ async function processBotDetection(el) {
     return;
   }
 
-  // Trust signals (in-memory following set — no network)
+  // Trust signals (following set + passive followed-by → mutual is highest positive)
   const userFollows = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
+  const isMutual = Boolean(window.BotLegitimacy?.isMutualWithUser?.(username));
+  const trustTier =
+    window.BotLegitimacy?.getTrustTier?.(username) ||
+    (isMutual ? 'mutual' : userFollows ? 'following' : 'none');
   replyData.userFollows = userFollows;
-  replyData.trustTier = userFollows ? 'following' : 'none';
-  replyData.mutualCount = 0;
+  replyData.trustTier = trustTier;
+  replyData.mutualCount = isMutual ? 1 : 0;
 
-  // Whitelist / override / follow hard-trust / cache / local template — all offline
-  const local = window.BotCache?.resolveLocally?.(username, replyData, { userFollows });
+  // Whitelist / override / mutual·follow hard-trust / cache / local — all offline.
+  // Hard-trust returns before short-comment local filters can demote.
+  const local = window.BotCache?.resolveLocally?.(username, replyData, {
+    userFollows,
+    isMutual,
+    trustTier,
+  });
   if (local) {
     if (local.source !== 'cache' && !local.expiry) {
       window.BotCache?.saveBotCache?.(username, local);
@@ -987,7 +996,27 @@ async function processBotDetection(el) {
     }
     if (passive.verified) replyData.isVerified = true;
     if (passive.location) replyData.location = passive.location;
+    // Relationship: they follow you → may upgrade to mutual hard-trust
+    if (passive.followedBy) {
+      window.BotLegitimacy?.noteFollowedBy?.(username);
+    }
   }
+
+  // Re-check hard-trust after passive relationship fields (mutual may appear late)
+  if (window.BotLegitimacy?.isHardTrustTier?.(window.BotLegitimacy.getTrustTier?.(username))) {
+    const tier = window.BotLegitimacy.getTrustTier(username);
+    const trustV = window.BotLegitimacy.createTrustVerdict(username, tier);
+    window.BotCache?.saveBotCache?.(username, trustV);
+    window.BotUI?.applyBotUI?.(el, trustV, username);
+    el.dataset.botProcessed = 'human';
+    el.dataset.botUsername = username.toLowerCase();
+    return;
+  }
+
+  // Refresh stamps for local filter if we re-resolve later
+  replyData.userFollows = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
+  replyData.trustTier = window.BotLegitimacy?.getTrustTier?.(username) || 'none';
+  replyData.mutualCount = window.BotLegitimacy?.isMutualWithUser?.(username) ? 1 : 0;
 
   const quickCheck = window.BotDetection?.shouldClassify?.(
     replyData,
@@ -1162,18 +1191,34 @@ async function init() {
     // Following list: cache-first, background paginate (never blocks UI)
     window.BotLegitimacy?.initLegitimacy?.().catch?.(() => {});
 
-    // When following pages land, soft-correct any already-processed tweets
-    // for accounts you follow (no extra X/API calls — pure local trust).
-    window.addEventListener('botFollowingUpdated', () => {
+    // Soft-correct bot/slop chips when follow or mutual trust arrives late
+    // (following crawl or passive followed-by). Never leave short-reply demotions.
+    const softCorrectTrust = (usernameHint) => {
       document.querySelectorAll('article[data-testid="tweet"][data-bot-username]').forEach((el) => {
         const u = el.dataset.botUsername;
-        if (!u || !window.BotLegitimacy?.isFollowedByUser?.(u)) return;
-        if (el.dataset.botProcessed === 'human' || el.dataset.botProcessed === 'whitelisted') return;
-        const verdict = window.BotLegitimacy.createFollowTrustVerdict(u);
+        if (!u) return;
+        if (usernameHint && u !== String(usernameHint).toLowerCase()) return;
+        const tier = window.BotLegitimacy?.getTrustTier?.(u);
+        if (!window.BotLegitimacy?.isHardTrustTier?.(tier)) return;
+        // Upgrade anyone not already showing mutual/following trust
+        const verdict = window.BotLegitimacy.createTrustVerdict(u, tier);
         window.BotCache?.saveBotCache?.(u, verdict);
         window.BotUI?.applyBotUI?.(el, verdict, u);
         el.dataset.botProcessed = 'human';
       });
+    };
+
+    window.addEventListener('botFollowingUpdated', () => softCorrectTrust());
+    window.addEventListener('botTrustUpdated', (e) => {
+      softCorrectTrust(e?.detail?.username);
+    });
+
+    // Passive relationship stream from pageScript intercepts
+    window.addEventListener('message', (event) => {
+      if (event.source !== window) return;
+      if (event.data?.type === '__relationshipSeen' && event.data.followedBy && event.data.username) {
+        window.BotLegitimacy?.noteFollowedBy?.(event.data.username);
+      }
     });
   }
   

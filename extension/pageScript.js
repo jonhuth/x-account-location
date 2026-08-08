@@ -64,12 +64,29 @@
 	function cacheUser(entry) {
 		if (!entry?.username) return;
 		const key = String(entry.username).toLowerCase();
-		userDataCache.set(key, { ...entry, fetchedAt: Date.now() });
+		const prev = userDataCache.get(key);
+		userDataCache.set(key, { ...prev, ...entry, fetchedAt: Date.now() });
 		// Bound memory — drop oldest half when over cap
 		if (userDataCache.size > USER_CACHE_MAX) {
 			const keys = Array.from(userDataCache.keys());
 			const drop = Math.floor(keys.length / 2);
 			for (let i = 0; i < drop; i++) userDataCache.delete(keys[i]);
+		}
+		// Surface followed-by so content can promote mutual hard-trust without extra API
+		if (entry.followedBy) {
+			try {
+				window.postMessage(
+					{
+						type: "__relationshipSeen",
+						username: key,
+						followedBy: true,
+						following: Boolean(entry.followingMe),
+					},
+					"*",
+				);
+			} catch {
+				/* ignore */
+			}
 		}
 	}
 

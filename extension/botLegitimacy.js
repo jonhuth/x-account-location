@@ -13,11 +13,22 @@ const FOLLOWING_START_DELAY_MS = 4000; // wait after page load before hitting Fo
 
 // State
 let userFollowingSet = null;
+// People who follow *you* (from passive intercepts / relationship fields)
+let followedBySet = new Set();
 let followingCacheExpiry = 0;
 let followingUpdatedAt = 0;
 let isLoadingFollowing = false;
 let followingLoadPromise = null;
 let followingComplete = false; // true when full pagination finished (or hit max)
+
+// Trust rank: higher = stronger positive signal (never demoted by short-reply local filters)
+const TRUST_RANK = {
+	none: 0,
+	following: 1,
+	mutual: 2,
+	whitelist: 3,
+	override_human: 4,
+};
 
 // ---------------------------------------------------------------------------
 // Storage
@@ -73,23 +84,35 @@ async function saveFollowingCache(usernames, complete = false) {
 // ---------------------------------------------------------------------------
 
 function applyFollowingList(list) {
-	const prevSize = userFollowingSet?.size || 0;
+	const prev = userFollowingSet || new Set();
 	const set = new Set(
 		(Array.isArray(list) ? list : []).map((u) => String(u).toLowerCase()),
 	);
 	// Merge so progressive pages only grow the set
-	if (userFollowingSet) {
-		for (const u of userFollowingSet) set.add(u);
+	for (const u of prev) set.add(u);
+	const newlyFollowed = [];
+	for (const u of set) {
+		if (!prev.has(u)) newlyFollowed.push(u);
 	}
 	userFollowingSet = set;
 	// Notify content script so any early mis-flags can soft-correct without X load
-	if (set.size > prevSize && typeof window !== "undefined") {
+	if (newlyFollowed.length > 0 && typeof window !== "undefined") {
 		try {
 			window.dispatchEvent(
 				new CustomEvent("botFollowingUpdated", {
-					detail: { count: set.size },
+					detail: { count: set.size, newlyFollowed },
 				}),
 			);
+			// Newly discovered follows that already follow us → mutual soft-correct
+			for (const u of newlyFollowed) {
+				if (followedBySet.has(u)) {
+					window.dispatchEvent(
+						new CustomEvent("botTrustUpdated", {
+							detail: { username: u, trustTier: "mutual" },
+						}),
+					);
+				}
+			}
 		} catch {
 			/* ignore */
 		}
@@ -242,19 +265,67 @@ function isFollowedByUser(username) {
 }
 
 /**
+ * Record that `username` follows you (passive GraphQL relationship fields).
+ * Combined with isFollowedByUser → mutual hard-trust (highest positive signal).
+ */
+function noteFollowedBy(username) {
+	const key = String(username || "").toLowerCase();
+	if (!key) return false;
+	const had = followedBySet.has(key);
+	followedBySet.add(key);
+	if (!had && isFollowedByUser(key)) {
+		try {
+			window.dispatchEvent(
+				new CustomEvent("botTrustUpdated", {
+					detail: { username: key, trustTier: "mutual" },
+				}),
+			);
+		} catch {
+			/* ignore */
+		}
+	}
+	return !had;
+}
+
+function isFollowedByThem(username) {
+	return followedBySet.has(String(username || "").toLowerCase());
+}
+
+/** Mutual = you follow them AND they follow you. Highest positive social signal we can get offline. */
+function isMutualWithUser(username) {
+	const key = String(username || "").toLowerCase();
+	return isFollowedByUser(key) && isFollowedByThem(key);
+}
+
+/**
  * Trust tiers (cheap, no extra X calls):
- * - following: you follow them (strong)
- * - override_human / override_bot: personal feedback (handled in BotCache)
+ * - mutual: you follow each other (highest positive — never demoted by short-reply local filters)
+ * - following: you follow them (hard-trust)
+ * - override_*: personal feedback (handled in BotCache)
  * - none
  */
 function getTrustTier(username) {
+	if (isMutualWithUser(username)) return "mutual";
 	if (isFollowedByUser(username)) return "following";
 	return "none";
 }
 
+function trustRank(tier) {
+	return TRUST_RANK[String(tier || "none")] ?? 0;
+}
+
+/** True when tier is social hard-trust (mutual or following) — short comments must not override. */
+function isHardTrustTier(tier) {
+	return tier === "mutual" || tier === "following";
+}
+
 function getMutualFollowCount() {
-	// Full mutuals need target follower lists — too expensive for X client.
-	return 0;
+	if (!userFollowingSet) return 0;
+	let n = 0;
+	for (const u of userFollowingSet) {
+		if (followedBySet.has(u)) n++;
+	}
+	return n;
 }
 
 async function getUserContext(username) {
@@ -263,17 +334,34 @@ async function getUserContext(username) {
 		loadUserFollowing().catch(() => {});
 	}
 	const userFollows = isFollowedByUser(username);
+	const mutual = isMutualWithUser(username);
 	return {
 		userFollows,
-		mutualCount: 0,
-		trustTier: userFollows ? "following" : "none",
+		mutualCount: mutual ? 1 : 0,
+		trustTier: mutual ? "mutual" : userFollows ? "following" : "none",
 	};
 }
 
 /**
- * Hard-trust verdict for accounts you follow — no server, no X API.
+ * Hard-trust verdict for mutual / following — no server, no X API.
+ * Short engagement replies must never replace this.
  */
-function createFollowTrustVerdict(username) {
+function createTrustVerdict(username, tier) {
+	const t = tier === "mutual" || isMutualWithUser(username) ? "mutual" : "following";
+	if (t === "mutual") {
+		return {
+			isBot: false,
+			isSlop: false,
+			confidence: 0.99,
+			category: "genuine",
+			reason: "Mutual follow — highest trust signal",
+			signals: ["mutual_follow", "user_follows", "followed_by", "hard_trust"],
+			source: "trust",
+			trustTier: "mutual",
+			accountScore: 0,
+			replyScore: 0,
+		};
+	}
 	return {
 		isBot: false,
 		isSlop: false,
@@ -286,6 +374,11 @@ function createFollowTrustVerdict(username) {
 		accountScore: 0,
 		replyScore: 0,
 	};
+}
+
+/** @deprecated use createTrustVerdict — kept for call sites */
+function createFollowTrustVerdict(username) {
+	return createTrustVerdict(username, getTrustTier(username));
 }
 
 async function initLegitimacy() {
@@ -303,12 +396,19 @@ if (typeof window !== "undefined") {
 	window.BotLegitimacy = {
 		loadUserFollowing,
 		isFollowedByUser,
+		isFollowedByThem,
+		isMutualWithUser,
+		noteFollowedBy,
 		getMutualFollowCount,
 		getTrustTier,
+		trustRank,
+		isHardTrustTier,
 		getUserContext,
+		createTrustVerdict,
 		createFollowTrustVerdict,
 		initLegitimacy,
 		getFollowingSet: () => userFollowingSet,
+		getFollowedBySet: () => followedBySet,
 		getFollowingCount: () => userFollowingSet?.size || 0,
 		isFollowingComplete: () => followingComplete,
 		isLoading: () => isLoadingFollowing,

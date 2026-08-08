@@ -201,8 +201,28 @@ const LLM_SLOP_PATTERNS = [
 
 /**
  * Cheap local classification. Returns a verdict or null if uncertain (needs AI).
+ * Never fires for mutual / following hard-trust — short comments must not demote them.
  */
 function localClassify(replyData) {
+	const tier = String(replyData?.trustTier || "none");
+	if (tier === "mutual" || tier === "following" || tier === "whitelist") {
+		return null;
+	}
+	if (replyData?.userFollows === true) {
+		return null;
+	}
+	// Belt-and-suspenders if caller forgot to stamp trustTier
+	const u = String(replyData?.username || "").toLowerCase();
+	if (
+		u &&
+		typeof window !== "undefined" &&
+		window.BotLegitimacy?.isHardTrustTier?.(
+			window.BotLegitimacy.getTrustTier?.(u),
+		)
+	) {
+		return null;
+	}
+
 	const text = String(replyData?.replyText || "").trim();
 	if (!text) return null;
 
