@@ -592,11 +592,106 @@ function buildReplyIndexEntry(username, replyData) {
 	};
 }
 
+/** Whether (self, peer) should join the same look-alike spam cluster. */
+function isThreadMatch(self, peerEntry, score) {
+	const sharedDist = sharedDistinctiveCount(self.tokens, peerEntry.tokens);
+	const selfLow = isLowFollowerProfile(self.followers);
+	const peerLow = isLowFollowerProfile(peerEntry.followers);
+	const bothLow = selfLow && peerLow;
+	const eitherLow = selfLow || peerLow;
+	// Easier join if peer is already in a spam cluster (3rd/4th alt in a ring)
+	const peerInCluster = Boolean(peerEntry.clusterId);
+	const joinBoost = peerInCluster ? 0.06 : 0;
+
+	if (score >= 0.42 - joinBoost && bothLow) return { hit: true, bothLow, eitherLow, sharedDist };
+	if (score >= 0.4 - joinBoost && eitherLow && sharedDist >= 3) {
+		return { hit: true, bothLow, eitherLow, sharedDist };
+	}
+	if (score >= 0.5 - joinBoost && sharedDist >= 3) {
+		return { hit: true, bothLow, eitherLow, sharedDist };
+	}
+	if (score >= 0.38 && bothLow && sharedDist >= 3) {
+		return { hit: true, bothLow, eitherLow, sharedDist };
+	}
+	// Already-clustered peer + solid paraphrase → absorb into ring
+	if (peerInCluster && score >= 0.34 && sharedDist >= 3) {
+		return { hit: true, bothLow, eitherLow, sharedDist };
+	}
+	return { hit: false, bothLow, eitherLow, sharedDist };
+}
+
+function isHardTrustUser(username) {
+	if (
+		typeof window !== "undefined" &&
+		window.BotLegitimacy?.isHardTrustTier?.(
+			window.BotLegitimacy.getTrustTier?.(username),
+		)
+	) {
+		return true;
+	}
+	return false;
+}
+
 /**
- * On /status/ pages only: detect near-duplicate replies from different accounts
- * (paraphrase spam rings). Soft-flags both sides; never overrides hard-trust.
+ * Expand to full cluster: all accounts already sharing a clusterId with any match,
+ * plus every direct match above threshold (handles 3+ paraphrased alts).
+ */
+function collectClusterMembers(map, key, self, directMatches) {
+	const members = new Set([key]);
+	const clusterIds = new Set();
+
+	for (const m of directMatches) {
+		members.add(m.otherUser);
+		if (m.entry.clusterId) clusterIds.add(m.entry.clusterId);
+	}
+	if (self.clusterId) clusterIds.add(self.clusterId);
+
+	// Union everyone already tagged with those cluster ids
+	if (clusterIds.size > 0) {
+		for (const [user, entry] of map.entries()) {
+			if (entry.clusterId && clusterIds.has(entry.clusterId)) {
+				members.add(user);
+			}
+		}
+	}
+
+	// Transitive: anyone matching any current member at a relaxed threshold
+	let grew = true;
+	while (grew) {
+		grew = false;
+		const snapshot = [...members];
+		for (const [user, entry] of map.entries()) {
+			if (members.has(user) || isHardTrustUser(user)) continue;
+			for (const memberUser of snapshot) {
+				const memberEntry = memberUser === key ? self : map.get(memberUser);
+				if (!memberEntry) continue;
+				const score = replySimilarity(entry, memberEntry);
+				const sharedDist = sharedDistinctiveCount(entry.tokens, memberEntry.tokens);
+				// Relaxed expansion once we have a seed pair (cluster rings)
+				if (
+					(score >= 0.36 && sharedDist >= 3) ||
+					(score >= 0.4 && sharedDist >= 2) ||
+					(score >= 0.34 &&
+						isLowFollowerProfile(entry.followers) &&
+						isLowFollowerProfile(memberEntry.followers) &&
+						sharedDist >= 3)
+				) {
+					members.add(user);
+					grew = true;
+					break;
+				}
+			}
+		}
+	}
+
+	return [...members].filter((u) => !isHardTrustUser(u));
+}
+
+/**
+ * On /status/ pages only: detect near-duplicate reply *clusters* (2+ alts).
+ * Soft-flags the whole ring; never overrides hard-trust.
  *
- * @returns {{ verdict: object, peerUsername: string, score: number } | null}
+ * @returns {{ verdict: object, peerUsernames: string[], clusterSize: number, score: number } | null}
  */
 function classifyThreadDuplicate(username, replyData) {
 	if (!isTweetDetailView()) return null;
@@ -611,14 +706,7 @@ function classifyThreadDuplicate(username, replyData) {
 	const tier = String(replyData?.trustTier || "none");
 	if (tier === "mutual" || tier === "following" || tier === "whitelist") return null;
 	if (replyData?.userFollows === true) return null;
-	if (
-		typeof window !== "undefined" &&
-		window.BotLegitimacy?.isHardTrustTier?.(
-			window.BotLegitimacy.getTrustTier?.(key),
-		)
-	) {
-		return null;
-	}
+	if (isHardTrustUser(key)) return null;
 
 	const text = String(replyData?.replyText || "").trim();
 	// Need enough substance for paraphrase matching (templates handled elsewhere)
@@ -628,28 +716,24 @@ function classifyThreadDuplicate(username, replyData) {
 	if (self.tokens.length < 5) return null;
 
 	const map = ensureThreadRegistry(statusId);
+	// Preserve prior cluster membership if re-processing
+	const prior = map.get(key);
+	if (prior?.clusterId) self.clusterId = prior.clusterId;
 
-	let best = null;
+	/** @type {{ otherUser: string, score: number, entry: object, match: object }[]} */
+	const directMatches = [];
 	for (const [otherUser, entry] of map.entries()) {
 		if (otherUser === key) continue;
-		// Skip peers that became hard-trust later
-		if (
-			typeof window !== "undefined" &&
-			window.BotLegitimacy?.isHardTrustTier?.(
-				window.BotLegitimacy.getTrustTier?.(otherUser),
-			)
-		) {
-			continue;
-		}
+		if (isHardTrustUser(otherUser)) continue;
 		const score = replySimilarity(self, entry);
-		if (!best || score > best.score) {
-			best = { otherUser, score, entry };
+		const match = isThreadMatch(self, entry, score);
+		if (match.hit) {
+			directMatches.push({ otherUser, score, entry, match });
 		}
 	}
 
-	// Always register so the *next* similar reply can match us
+	// Always register so later alts can join the ring
 	map.set(key, self);
-	// Cap per thread
 	if (map.size > 80) {
 		const oldest = [...map.entries()].sort(
 			(a, b) => (a[1].registeredAt || 0) - (b[1].registeredAt || 0),
@@ -659,71 +743,82 @@ function classifyThreadDuplicate(username, replyData) {
 		}
 	}
 
-	if (!best) return null;
+	if (directMatches.length === 0) return null;
 
-	const selfLow = isLowFollowerProfile(self.followers);
-	const peerLow = isLowFollowerProfile(best.entry.followers);
-	const bothLow = selfLow && peerLow;
-	const eitherLow = selfLow || peerLow;
-	const score = best.score;
+	directMatches.sort((a, b) => b.score - a.score);
+	const bestScore = directMatches[0].score;
+	const clusterMembers = collectClusterMembers(map, key, self, directMatches);
+	if (clusterMembers.length < 2) return null;
 
-	// Thresholds: paraphrase spam + low-follower alts (detail view only)
-	const sharedDist = sharedDistinctiveCount(self.tokens, best.entry.tokens);
-	let hit = false;
-	let confidence = 0;
-	if (score >= 0.42 && bothLow) {
-		hit = true;
-		confidence = Math.min(0.95, 0.8 + score * 0.18);
-	} else if (score >= 0.4 && eitherLow && sharedDist >= 3) {
-		hit = true;
-		confidence = Math.min(0.93, 0.76 + score * 0.2);
-	} else if (score >= 0.5 && sharedDist >= 3) {
-		// Strong paraphrase even without follower counts
-		hit = true;
-		confidence = Math.min(0.9, 0.72 + score * 0.2);
-	} else if (score >= 0.38 && bothLow && sharedDist >= 3) {
-		hit = true;
-		confidence = Math.min(0.9, 0.74 + score * 0.2);
+	const clusterId =
+		self.clusterId ||
+		directMatches.find((m) => m.entry.clusterId)?.entry.clusterId ||
+		`c_${statusId}_${Date.now().toString(36)}`;
+
+	// Tag entire ring
+	for (const member of clusterMembers) {
+		const entry = map.get(member);
+		if (entry) entry.clusterId = clusterId;
 	}
+	self.clusterId = clusterId;
+	map.set(key, self);
 
-	if (!hit) return null;
+	const peers = clusterMembers.filter((u) => u !== key);
+	const lowCount = clusterMembers.filter((u) => {
+		const e = u === key ? self : map.get(u);
+		return isLowFollowerProfile(e?.followers);
+	}).length;
+	const mostlyLow = lowCount >= Math.ceil(clusterMembers.length * 0.6);
+	const pct = Math.round(bestScore * 100);
+	const size = clusterMembers.length;
+	const peerSample = peers
+		.slice(0, 4)
+		.map((p) => `@${p}`)
+		.join(", ");
+	const more = peers.length > 4 ? ` +${peers.length - 4}` : "";
 
-	const peer = best.otherUser;
-	const pct = Math.round(score * 100);
+	const confidence = Math.min(
+		0.96,
+		0.78 + bestScore * 0.12 + Math.min(0.08, (size - 2) * 0.03),
+	);
+
 	const verdict = makeLocalVerdict({
 		isBot: true,
 		isSlop: true,
 		confidence,
 		category: "engagement_farmer",
-		reason: bothLow
-			? `Near-duplicate reply to @${peer} in this thread (${pct}% similar) from low-follower accounts — coordinated spam pattern`
-			: `Near-duplicate reply to @${peer} in this thread (${pct}% similar wording) — likely coordinated spam`,
+		reason:
+			size >= 3
+				? `Coordinated reply cluster (${size} look-alikes in this thread, ~${pct}% similar) — ${peerSample}${more}`
+				: mostlyLow
+					? `Near-duplicate reply cluster with @${peers[0]} in this thread (${pct}% similar) from low-follower accounts`
+					: `Near-duplicate reply to @${peers[0]} in this thread (${pct}% similar wording)`,
 		signals: [
 			"thread_near_duplicate",
+			`cluster_size_${size}`,
 			`sim_${pct}`,
-			`peer_${peer}`,
-			...(bothLow ? ["low_followers_pair"] : eitherLow ? ["low_followers"] : []),
+			...peers.slice(0, 5).map((p) => `peer_${p}`),
+			...(mostlyLow ? ["low_followers_cluster"] : []),
 		],
 	});
 
-	return { verdict, peerUsername: peer, score };
+	return {
+		verdict,
+		peerUsernames: peers,
+		peerUsername: peers[0] || null, // back-compat
+		clusterSize: size,
+		clusterId,
+		score: bestScore,
+	};
 }
 
 /**
- * Re-apply a thread-duplicate verdict onto the peer's visible tweet cards.
+ * Re-apply a thread-duplicate verdict onto one peer's visible tweet cards.
  */
 function applyThreadDuplicateToPeer(peerUsername, verdict) {
 	if (!peerUsername || !verdict || typeof document === "undefined") return;
 	const peer = String(peerUsername).toLowerCase();
-	// Don't demote hard-trust peers
-	if (
-		typeof window !== "undefined" &&
-		window.BotLegitimacy?.isHardTrustTier?.(
-			window.BotLegitimacy.getTrustTier?.(peer),
-		)
-	) {
-		return;
-	}
+	if (isHardTrustUser(peer)) return;
 	try {
 		window.BotCache?.saveBotCache?.(peer, verdict);
 	} catch {
@@ -741,6 +836,14 @@ function applyThreadDuplicateToPeer(peerUsername, verdict) {
 		});
 }
 
+/** Flag every member of a look-alike cluster (2, 3, N…). */
+function applyThreadDuplicateToCluster(peerUsernames, verdict) {
+	const peers = Array.isArray(peerUsernames) ? peerUsernames : [];
+	for (const peer of peers) {
+		applyThreadDuplicateToPeer(peer, verdict);
+	}
+}
+
 // Export
 if (typeof window !== "undefined") {
 	window.BotDetection = {
@@ -750,6 +853,7 @@ if (typeof window !== "undefined") {
 		classifyFollowRatio,
 		classifyThreadDuplicate,
 		applyThreadDuplicateToPeer,
+		applyThreadDuplicateToCluster,
 		isTweetDetailView,
 		getStatusIdFromPath,
 		clearThreadReplyRegistry,
