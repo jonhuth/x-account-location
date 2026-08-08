@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    /* ------------------------------------------------------------------
+       Design tokens — single source for popup chrome
+       ------------------------------------------------------------------ */
+    :root {
+      --bg: #ffffff;
+      --bg-elevated: #f7f9f9;
+      --fg: #0f1419;
+      --muted: #536471;
+      --border: #eff3f4;
+      --border-strong: #ccd6dd;
+      --primary: #1d9bf0;
+      --primary-hover: #1a8cd8;
+      --primary-active: #1881c4;
+      --primary-soft: rgba(29, 155, 240, 0.12);
+      --primary-disabled: #8ecdf8;
+      --danger: #f4212e;
+      --danger-hover: #dc1d28;
+      --danger-soft: rgba(244, 33, 46, 0.1);
+      --success: #00ba7c;
+      --success-soft: rgba(0, 186, 124, 0.1);
+      --slop: #a855f7;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-pill: 999px;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --text-title: 15px;
+      --text-body: 13px;
+      --text-meta: 12px;
+      --text-micro: 11px;
+      --shadow-focus: 0 0 0 2px var(--primary-soft), 0 0 0 3px var(--primary);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15202b;
+        --bg-elevated: #1e2732;
+        --fg: #e7e9ea;
+        --muted: #8b98a5;
+        --border: #2f3336;
+        --border-strong: #536471;
+        --primary-soft: rgba(29, 155, 240, 0.2);
+        --danger-soft: rgba(244, 33, 46, 0.16);
+        --success-soft: rgba(0, 186, 124, 0.16);
+      }
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      width: 300px;
+      margin: 0;
+      padding: var(--space-4);
+      font-family: var(--font);
+      font-size: var(--text-body);
+      line-height: 1.35;
+      color: var(--fg);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Type */
+    .title {
+      margin: 0;
+      font-size: var(--text-title);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .section-label {
+      margin: 0 0 var(--space-2);
+      font-size: var(--text-meta);
+      font-weight: 650;
+      color: var(--fg);
+    }
+
+    .meta {
+      margin: var(--space-2) 0 0;
+      font-size: var(--text-meta);
+      color: var(--muted);
+    }
+
+    .meta--center { text-align: center; }
+    .meta--success { color: var(--success); }
+    .meta--danger { color: var(--danger); }
+    .meta--primary { color: var(--primary); }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-3);
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid var(--border);
+      margin: 0 0 var(--space-3);
+    }
+
+    .tab {
+      flex: 1;
+      margin: 0;
+      padding: var(--space-2) var(--space-1);
+      border: none;
+      border-bottom: 2px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: var(--text-meta);
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    }
+
+    .tab:hover { color: var(--fg); }
+    .tab:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+    .tab[aria-selected="true"] {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Sections */
+    .stack {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    .section {
+      padding-bottom: var(--space-3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    /* Rows / cards */
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      padding: 10px var(--space-3);
+      background: var(--bg-elevated);
+      border-radius: var(--radius-md);
+    }
+
+    .row-label {
+      font-size: var(--text-body);
+      font-weight: 550;
+      color: var(--fg);
+    }
+
+    /* Switch */
+    .switch {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      flex-shrink: 0;
+      padding: 0;
+      border: none;
+      border-radius: 12px;
+      background: var(--border-strong);
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+
+    .switch[aria-checked="true"] { background: var(--primary); }
+    .switch:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+    .switch::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      transition: transform 0.15s ease;
+    }
+
+    .switch[aria-checked="true"]::after { transform: translateX(20px); }
+
+    /* Slider */
+    .field { margin-top: var(--space-2); }
+
+    .field-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: var(--space-1);
+    }
+
+    .field-label { font-size: var(--text-meta); color: var(--muted); }
+    .field-value { font-size: var(--text-meta); font-weight: 650; color: var(--fg); }
+
+    .slider {
+      width: 100%;
+      height: 4px;
+      margin: 0;
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--border-strong);
+      border-radius: 2px;
+      outline: none;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    .slider::-moz-range-thumb {
+      width: 16px;
+      height: 16px;
+      border: none;
+      border-radius: 50%;
+      background: var(--primary);
+      cursor: pointer;
+    }
+
+    .slider:focus-visible { box-shadow: var(--shadow-focus); border-radius: 2px; }
+
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-2);
+    }
+
+    .stat {
+      padding: var(--space-2);
+      background: var(--bg-elevated);
+      border-radius: var(--radius-md);
+      text-align: center;
+    }
+
+    .stat-value {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.1;
+      color: var(--fg);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-value--bots { color: var(--danger); }
+    .stat-value--humans { color: var(--success); }
+
+    .stat-label {
+      margin-top: 2px;
+      font-size: var(--text-micro);
+      color: var(--muted);
+    }
+
+    .list {
+      margin-top: var(--space-2);
+      max-height: 120px;
+      overflow-y: auto;
+      font-size: var(--text-meta);
+    }
+
+    .list-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-1) 0;
+    }
+
+    .list-muted { color: var(--muted); }
+    .list-strong { color: var(--fg); font-weight: 550; }
+
+    .empty {
+      margin: 0;
+      font-size: var(--text-meta);
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    /* Disclosure */
+    details.advanced {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg);
+    }
+
+    details.advanced + details.advanced { margin-top: var(--space-2); }
+
+    details.advanced > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px var(--space-3);
+      font-size: var(--text-meta);
+      font-weight: 650;
+      color: var(--fg);
+      user-select: none;
+    }
+
+    details.advanced > summary::-webkit-details-marker { display: none; }
+
+    details.advanced > summary::after {
+      content: '▸';
+      float: right;
+      color: var(--muted);
+      transition: transform 0.12s ease;
+    }
+
+    details.advanced[open] > summary::after { transform: rotate(90deg); }
+    details.advanced > summary:focus-visible { outline: none; box-shadow: inset var(--shadow-focus); }
+
+    .advanced-body {
+      padding: 0 var(--space-3) var(--space-3);
+      border-top: 1px solid var(--border);
+      padding-top: var(--space-3);
+    }
+
+    /* Forms */
+    .input-row {
+      display: flex;
+      gap: var(--space-2);
+    }
+
+    .input {
+      flex: 1;
+      min-width: 0;
+      padding: var(--space-2) var(--space-3);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-pill);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: var(--text-body);
+      outline: none;
+    }
+
+    .input::placeholder { color: var(--muted); }
+    .input:focus { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-1);
+      margin: 0;
+      padding: 10px var(--space-3);
+      border: 1px solid transparent;
+      border-radius: var(--radius-pill);
+      background: var(--primary);
+      color: #fff;
+      font: inherit;
+      font-size: var(--text-body);
+      font-weight: 650;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+    }
+
+    .btn:hover { background: var(--primary-hover); }
+    .btn:active { background: var(--primary-active); }
+    .btn:disabled {
+      background: var(--primary-disabled);
+      cursor: not-allowed;
+    }
+    .btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+    .btn--block { width: 100%; }
+    .btn--compact {
+      padding: var(--space-2) var(--space-3);
+      white-space: nowrap;
+    }
+
+    .btn--secondary {
+      background: transparent;
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+    .btn--secondary:hover { background: var(--primary-soft); }
+    .btn--secondary:disabled {
+      background: transparent;
+      color: var(--muted);
+      border-color: var(--border-strong);
+    }
+
+    .btn--ghost {
+      background: transparent;
+      color: var(--muted);
+      border-color: var(--border-strong);
+      font-size: var(--text-micro);
+      font-weight: 600;
+      padding: var(--space-1) var(--space-2);
+      border-radius: var(--radius-sm);
+    }
+    .btn--ghost:hover {
+      background: var(--bg-elevated);
+      color: var(--fg);
+      border-color: var(--muted);
+    }
+
+    .btn--danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .btn--danger:hover { background: var(--danger-hover); }
+
+    .btn-stack {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    /* Lookup result */
+    .result {
+      margin-top: var(--space-2);
+      padding: 10px var(--space-3);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+      font-size: var(--text-meta);
+    }
+
+    .result--bot {
+      background: var(--danger-soft);
+      border-color: rgba(244, 33, 46, 0.25);
+    }
+
+    .result--human {
+      background: var(--success-soft);
+      border-color: rgba(0, 186, 124, 0.25);
+    }
+
+    .result--slop {
+      background: rgba(168, 85, 247, 0.12);
+      border-color: rgba(168, 85, 247, 0.3);
+    }
+
+    .result-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: 2px;
+    }
+
+    .result-user { font-weight: 650; color: var(--fg); }
+    .result-verdict { font-weight: 700; }
+    .result-verdict--bot { color: var(--danger); }
+    .result-verdict--human { color: var(--success); }
+    .result-verdict--slop { color: var(--slop); }
+    .result-reason { color: var(--muted); }
+
+    /* Whitelist */
+    .whitelist-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--space-1) 0;
+      font-size: var(--text-meta);
+    }
+
+    .icon-btn {
+      margin: 0;
+      padding: 0 var(--space-1);
+      border: none;
+      background: transparent;
+      color: var(--danger);
+      font-size: 16px;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+    }
+
+    .icon-btn:hover { opacity: 0.75; }
+    .icon-btn:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .section-head .section-label { margin: 0; }
+
+    .status-line {
+      margin-top: var(--space-2);
+      font-size: var(--text-meta);
+      text-align: center;
+      min-height: 1.2em;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1 class="title">X Account Tools</h1>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Extension sections">
+    <button type="button" class="tab" role="tab" id="tab-btn-bot" data-tab="bot"
+      aria-selected="true" aria-controls="tab-bot">Bots</button>
+    <button type="button" class="tab" role="tab" id="tab-btn-location" data-tab="location"
+      aria-selected="false" aria-controls="tab-location" tabindex="-1">Location</button>
+    <button type="button" class="tab" role="tab" id="tab-btn-tools" data-tab="tools"
+      aria-selected="false" aria-controls="tab-tools" tabindex="-1">Tools</button>
+  </div>
+
+  <!-- Bot -->
+  <div class="tab-panel active" role="tabpanel" id="tab-bot" aria-labelledby="tab-btn-bot">
+    <div class="stack">
+      <section class="section">
+        <div class="row">
+          <span class="row-label" id="botToggleLabel">Bot detection</span>
+          <button type="button" class="switch" id="botToggleSwitch"
+            role="switch" aria-checked="true" aria-labelledby="botToggleLabel"></button>
+        </div>
+        <div class="field">
+          <div class="field-head">
+            <span class="field-label" id="sensitivityLabel">Sensitivity</span>
+            <span class="field-value" id="sensitivityValue">Medium</span>
+          </div>
+          <input type="range" min="1" max="5" value="3" class="slider" id="sensitivitySlider"
+            aria-labelledby="sensitivityLabel" aria-describedby="sensitivityValue">
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-label">Session stats</div>
+        <div class="stats-grid">
+          <div class="stat">
+            <div class="stat-value stat-value--bots" id="botCount">0</div>
+            <div class="stat-label">Bots</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value stat-value--humans" id="humanCount">0</div>
+            <div class="stat-label">Humans</div>
+          </div>
+        </div>
+        <div class="list" id="botCategories" hidden></div>
+        <p class="empty" id="botStatsEmpty" hidden>No classifications yet — browse X to fill this in.</p>
+      </section>
+
+      <details class="advanced">
+        <summary>Lookup account</summary>
+        <div class="advanced-body">
+          <div class="input-row">
+            <input type="text" class="input" id="lookupInput" placeholder="@username"
+              autocomplete="off" spellcheck="false" aria-label="Username to check">
+            <button type="button" class="btn btn--compact" id="lookupBtn">Check</button>
+          </div>
+          <div id="lookupResult"></div>
+        </div>
+      </details>
+
+      <details class="advanced">
+        <summary>Whitelist</summary>
+        <div class="advanced-body">
+          <div id="whitelistList">
+            <p class="empty">No whitelisted accounts</p>
+          </div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <!-- Location -->
+  <div class="tab-panel" role="tabpanel" id="tab-location" aria-labelledby="tab-btn-location" hidden>
+    <div class="stack">
+      <section class="section">
+        <div class="row">
+          <span class="row-label" id="locationToggleLabel">Show location flags</span>
+          <button type="button" class="switch" id="toggleSwitch"
+            role="switch" aria-checked="false" aria-labelledby="locationToggleLabel"></button>
+        </div>
+        <p class="meta meta--center" id="status">Loading…</p>
+        <p class="meta">Country flags next to usernames from account location.</p>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <div class="section-label">Location stats</div>
+          <button type="button" class="btn btn--ghost" id="resetStatsBtn">Reset</button>
+        </div>
+        <p class="meta" id="statsTotal">Loading…</p>
+        <div class="list" id="statsList"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Tools -->
+  <div class="tab-panel" role="tabpanel" id="tab-tools" aria-labelledby="tab-btn-tools" hidden>
+    <div class="stack">
+      <section class="section">
+        <div class="section-label">Clean interests</div>
+        <button type="button" class="btn btn--block" id="cleanInterestsBtn">Clean interests</button>
+        <div class="status-line" id="cleanStatus"></div>
+        <p class="meta meta--center">Unchecks non-preferred interests on X settings.</p>
+      </section>
+
+      <section class="section">
+        <div class="section-label">Data</div>
+        <div class="btn-stack">
+          <button type="button" class="btn btn--block btn--secondary" id="exportDataBtn">Export all data</button>
+          <button type="button" class="btn btn--block btn--danger" id="clearAllDataBtn">Clear all data</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="countryFlags.js"></script>
+  <script src="myInterests.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

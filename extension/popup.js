@@ -12,21 +12,44 @@ const BOT_CACHE_KEY = 'bot_verdict_cache';
 const SENSITIVITY_LABELS = ['Very Lenient', 'Lenient', 'Medium', 'Aggressive', 'Very Aggressive'];
 
 // ============================================================================
-// Tab Navigation
+// Tab Navigation (roving tabindex + arrow keys)
 // ============================================================================
 
-const tabs = document.querySelectorAll('.tab');
-const tabContents = document.querySelectorAll('.tab-content');
+const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+const tabPanels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
 
-tabs.forEach(tab => {
-  tab.addEventListener('click', () => {
-    const targetId = tab.dataset.tab;
-    
-    tabs.forEach(t => t.classList.remove('active'));
-    tabContents.forEach(c => c.classList.remove('active'));
-    
-    tab.classList.add('active');
-    document.getElementById(`tab-${targetId}`).classList.add('active');
+function activateTab(tab) {
+  const targetId = tab.dataset.tab;
+  tabs.forEach((t) => {
+    const selected = t === tab;
+    t.setAttribute('aria-selected', selected ? 'true' : 'false');
+    t.tabIndex = selected ? 0 : -1;
+  });
+  tabPanels.forEach((panel) => {
+    const active = panel.id === `tab-${targetId}`;
+    panel.classList.toggle('active', active);
+    if (active) {
+      panel.removeAttribute('hidden');
+    } else {
+      panel.setAttribute('hidden', '');
+    }
+  });
+}
+
+tabs.forEach((tab) => {
+  tab.addEventListener('click', () => activateTab(tab));
+  tab.addEventListener('keydown', (e) => {
+    const idx = tabs.indexOf(tab);
+    let next = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % tabs.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (idx - 1 + tabs.length) % tabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = tabs.length - 1;
+    if (next >= 0) {
+      e.preventDefault();
+      tabs[next].focus();
+      activateTab(tabs[next]);
+    }
   });
 });
 
@@ -88,46 +111,33 @@ toggleSwitch.addEventListener('click', () => {
 });
 
 function updateToggle(isEnabled) {
-  if (isEnabled) {
-    toggleSwitch.classList.add('enabled');
-    status.textContent = 'Extension is enabled';
-    status.style.color = '#1d9bf0';
-  } else {
-    toggleSwitch.classList.remove('enabled');
-    status.textContent = 'Extension is disabled';
-    status.style.color = '#536471';
-  }
+  toggleSwitch.setAttribute('aria-checked', isEnabled ? 'true' : 'false');
+  status.textContent = isEnabled ? 'Flags are on' : 'Flags are off';
+  status.className = isEnabled ? 'meta meta--center meta--primary' : 'meta meta--center';
 }
 
 // Load and display statistics
 function loadAndDisplayStats(stats) {
   if (!stats || Object.keys(stats).length === 0) {
     statsTotal.textContent = 'No profiles tracked yet';
-    statsList.innerHTML = '<div class="stats-empty">Start browsing Twitter to see statistics</div>';
+    statsList.innerHTML = '<p class="empty">Browse X to see location stats</p>';
     return;
   }
-  
-  // Calculate total
+
   const total = Object.values(stats).reduce((sum, count) => sum + count, 0);
-  statsTotal.textContent = `Total: ${total} unique profile${total !== 1 ? 's' : ''}`;
-  
-  // Sort by count (descending)
-  const sorted = Object.entries(stats)
-    .sort((a, b) => b[1] - a[1]);
-  
-  // Display stats
+  statsTotal.textContent = `${total} unique profile${total !== 1 ? 's' : ''}`;
+
+  const sorted = Object.entries(stats).sort((a, b) => b[1] - a[1]);
+
   statsList.innerHTML = sorted.map(([location, count]) => {
     const flag = getCountryFlag(location);
     const displayFlag = flag || '';
     const displayLocation = flag ? location : `(${location})`;
-    
+
     return `
-      <div class="stats-item">
-        <div class="stats-item-location">
-          <span>${displayFlag}</span>
-          <span>${displayLocation}</span>
-        </div>
-        <span>${count}</span>
+      <div class="list-row">
+        <span class="list-muted">${displayFlag} ${displayLocation}</span>
+        <span class="list-strong">${count}</span>
       </div>
     `;
   }).join('');
@@ -163,43 +173,41 @@ const cleanStatus = document.getElementById('cleanStatus');
 
 cleanInterestsBtn.addEventListener('click', async () => {
   cleanInterestsBtn.disabled = true;
-  cleanStatus.textContent = 'Cleaning interests...';
-  cleanStatus.className = 'action-status';
-  
+  cleanStatus.textContent = 'Cleaning interests…';
+  cleanStatus.className = 'status-line';
+
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
+
     if (!tab) {
       throw new Error('No active tab found');
     }
-    
-    // Check if we're on a Twitter/X page
+
     if (!tab.url?.includes('x.com') && !tab.url?.includes('twitter.com')) {
-      cleanStatus.textContent = 'Navigate to x.com/settings/your_twitter_data/twitter_interests first';
-      cleanStatus.className = 'action-status error';
+      cleanStatus.textContent = 'Open x.com interests settings first';
+      cleanStatus.className = 'status-line meta--danger';
       cleanInterestsBtn.disabled = false;
       return;
     }
-    
-    // Execute the clean interests script
+
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: cleanInterests,
       args: [MY_INTERESTS]
     });
-    
+
     const result = results[0]?.result;
     if (result?.success) {
       cleanStatus.textContent = result.message;
-      cleanStatus.className = 'action-status success';
+      cleanStatus.className = 'status-line meta--success';
     } else {
       cleanStatus.textContent = result?.message || 'No interests found on this page';
-      cleanStatus.className = 'action-status';
+      cleanStatus.className = 'status-line';
     }
   } catch (error) {
     console.error('Error:', error);
     cleanStatus.textContent = 'Error: ' + error.message;
-    cleanStatus.className = 'action-status error';
+    cleanStatus.className = 'status-line meta--danger';
   } finally {
     cleanInterestsBtn.disabled = false;
   }
@@ -215,6 +223,7 @@ const sensitivityValue = document.getElementById('sensitivityValue');
 const botCount = document.getElementById('botCount');
 const humanCount = document.getElementById('humanCount');
 const botCategories = document.getElementById('botCategories');
+const botStatsEmpty = document.getElementById('botStatsEmpty');
 const lookupInput = document.getElementById('lookupInput');
 const lookupBtn = document.getElementById('lookupBtn');
 const lookupResult = document.getElementById('lookupResult');
@@ -224,13 +233,13 @@ const clearAllDataBtn = document.getElementById('clearAllDataBtn');
 
 // Category labels
 const CATEGORY_LABELS = {
-  engagement_farmer: '🌾 Engagement Farmer',
-  sycophant: '🤖 Sycophant Bot',
-  self_promoter: '📢 Self-Promoter',
-  airdrop_farmer: '🪂 Airdrop Farmer',
-  crypto_spam: '💩 Crypto Spam',
-  llm_slop: '🟣 LLM Slop',
-  genuine: '✓ Human',
+  engagement_farmer: 'Engagement farmer',
+  sycophant: 'Sycophant',
+  self_promoter: 'Self-promoter',
+  airdrop_farmer: 'Airdrop farmer',
+  crypto_spam: 'Crypto spam',
+  llm_slop: 'LLM slop',
+  genuine: 'Human',
 };
 
 // Load bot detection state
@@ -274,11 +283,7 @@ botToggleSwitch.addEventListener('click', () => {
 });
 
 function updateBotToggle(isEnabled) {
-  if (isEnabled) {
-    botToggleSwitch.classList.add('enabled');
-  } else {
-    botToggleSwitch.classList.remove('enabled');
-  }
+  botToggleSwitch.setAttribute('aria-checked', isEnabled ? 'true' : 'false');
 }
 
 // Sensitivity slider handler
@@ -306,7 +311,7 @@ function loadBotStats() {
     let bots = 0;
     let humans = 0;
     const categories = {};
-    
+
     for (const [, verdict] of Object.entries(cache)) {
       if (verdict.isBot) {
         bots++;
@@ -316,48 +321,56 @@ function loadBotStats() {
         humans++;
       }
     }
-    
+
     botCount.textContent = bots;
     humanCount.textContent = humans;
-    
-    // Display categories
+
+    const hasData = bots + humans > 0;
+    if (botStatsEmpty) {
+      botStatsEmpty.hidden = hasData;
+    }
+
     if (Object.keys(categories).length > 0) {
+      botCategories.hidden = false;
       botCategories.innerHTML = Object.entries(categories)
         .sort((a, b) => b[1] - a[1])
         .map(([cat, count]) => `
-          <div class="bot-category-item">
-            <span class="bot-category-name">${CATEGORY_LABELS[cat] || cat}</span>
-            <span class="bot-category-count">${count}</span>
+          <div class="list-row">
+            <span class="list-muted">${CATEGORY_LABELS[cat] || cat}</span>
+            <span class="list-strong">${count}</span>
           </div>
         `).join('');
     } else {
+      botCategories.hidden = true;
       botCategories.innerHTML = '';
     }
   });
+}
+
+function setLookupMessage(html) {
+  lookupResult.innerHTML = html;
 }
 
 // Lookup handler
 lookupBtn.addEventListener('click', async () => {
   const username = lookupInput.value.trim().replace(/^@/, '');
   if (!username) {
-    lookupResult.innerHTML = '<div style="color: #f4212e; font-size: 12px;">Please enter a username</div>';
+    setLookupMessage('<p class="meta meta--danger">Enter a username</p>');
     return;
   }
-  
+
   lookupBtn.disabled = true;
-  lookupBtn.textContent = '...';
-  lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Checking...</div>';
-  
+  lookupBtn.textContent = '…';
+  setLookupMessage('<p class="meta">Checking…</p>');
+
   try {
-    // Check cache first
     const cacheResult = await chrome.storage.local.get([BOT_CACHE_KEY]);
     const cache = cacheResult[BOT_CACHE_KEY] || {};
     const cached = cache[username.toLowerCase()];
-    
+
     if (cached && cached.expiry && cached.expiry > Date.now()) {
       displayLookupResult(username, cached);
     } else {
-      // Send to content script to use the backend
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs[0]) {
           chrome.tabs.sendMessage(tabs[0].id, {
@@ -367,36 +380,43 @@ lookupBtn.addEventListener('click', async () => {
             if (response && response.verdict) {
               displayLookupResult(username, response.verdict);
             } else {
-              lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Could not check this user. Make sure you\'re on Twitter/X.</div>';
+              setLookupMessage('<p class="meta">Could not check this user. Open X in this tab.</p>');
             }
           });
         } else {
-          lookupResult.innerHTML = '<div style="color: #536471; font-size: 12px;">Open Twitter/X to use this feature.</div>';
+          setLookupMessage('<p class="meta">Open X to use lookup.</p>');
         }
       });
     }
   } catch (error) {
     console.error('Lookup error:', error);
-    lookupResult.innerHTML = '<div style="color: #f4212e; font-size: 12px;">Error checking user</div>';
+    setLookupMessage('<p class="meta meta--danger">Error checking user</p>');
   } finally {
     lookupBtn.disabled = false;
     lookupBtn.textContent = 'Check';
   }
 });
 
+lookupInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    lookupBtn.click();
+  }
+});
+
 function displayLookupResult(username, verdict) {
   const isBot = verdict.isBot;
   const isSlop = verdict.isSlop && !isBot;
-  const verdictClass = isBot ? 'bot' : (isSlop ? 'bot' : 'human');
-  const verdictText = isBot ? '🤖 Bot' : (isSlop ? '🟣 Slop' : '✓ Human');
-  
+  const kind = isBot ? 'bot' : (isSlop ? 'slop' : 'human');
+  const verdictText = isBot ? 'Bot' : (isSlop ? 'Slop' : 'Human');
+
   lookupResult.innerHTML = `
-    <div class="lookup-result ${verdictClass}">
-      <div class="lookup-result-header">
-        <span class="lookup-result-username">@${username}</span>
-        <span class="lookup-result-verdict ${verdictClass}">${verdictText}</span>
+    <div class="result result--${kind}">
+      <div class="result-head">
+        <span class="result-user">@${username}</span>
+        <span class="result-verdict result-verdict--${kind}">${verdictText}</span>
       </div>
-      ${(isBot || isSlop) ? `<div class="lookup-result-reason">${verdict.reason || CATEGORY_LABELS[verdict.category] || 'Detected'}</div>` : ''}
+      ${(isBot || isSlop) ? `<div class="result-reason">${verdict.reason || CATEGORY_LABELS[verdict.category] || 'Detected'}</div>` : ''}
     </div>
   `;
 }
@@ -405,24 +425,22 @@ function displayLookupResult(username, verdict) {
 function loadWhitelist() {
   chrome.storage.local.get([BOT_WHITELIST_KEY], (result) => {
     const whitelist = result[BOT_WHITELIST_KEY] || [];
-    
+
     if (whitelist.length === 0) {
-      whitelistList.innerHTML = '<div class="whitelist-empty">No whitelisted accounts</div>';
+      whitelistList.innerHTML = '<p class="empty">No whitelisted accounts</p>';
       return;
     }
-    
+
     whitelistList.innerHTML = whitelist.map(username => `
       <div class="whitelist-item">
         <span>@${username}</span>
-        <button class="whitelist-remove" data-username="${username}">×</button>
+        <button type="button" class="icon-btn whitelist-remove" data-username="${username}" aria-label="Remove @${username}">×</button>
       </div>
     `).join('');
-    
-    // Add remove handlers
+
     whitelistList.querySelectorAll('.whitelist-remove').forEach(btn => {
       btn.addEventListener('click', () => {
-        const usernameToRemove = btn.dataset.username;
-        removeFromWhitelist(usernameToRemove);
+        removeFromWhitelist(btn.dataset.username);
       });
     });
   });

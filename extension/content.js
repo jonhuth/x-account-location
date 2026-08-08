@@ -151,20 +151,28 @@ function calculateExpiry(location, now = Date.now()) {
 }
 
 async function canWriteToStorage() {
-  if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) return false;
+  if (!isExtensionContextValid()) return false;
+  // Safari (and some engines) omit getBytesInUse — allow writes when quota API is missing.
+  // Returning false here previously blocked all location-cache persistence on Safari.
+  if (typeof chrome.storage?.local?.getBytesInUse !== 'function') return true;
   try {
     const bytesUsed = await chrome.storage.local.getBytesInUse(null);
     return Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100) < STORAGE_LOG_THRESHOLD;
-  } catch { return false; }
+  } catch {
+    // Prefer attempting a write over silently dropping cache on quota probe failures.
+    return true;
+  }
 }
 
 async function checkStorageUsage() {
   try {
-    if (!isExtensionContextValid() || !chrome.storage?.local?.getBytesInUse) return null;
+    if (!isExtensionContextValid() || typeof chrome.storage?.local?.getBytesInUse !== 'function') {
+      return null;
+    }
     const bytesUsed = await chrome.storage.local.getBytesInUse(null);
     const percentUsed = Math.floor((bytesUsed / STORAGE_QUOTA_BYTES) * 100);
     const logThreshold = Math.floor(percentUsed / 10) * 10;
-    if ((logThreshold > lastLoggedStoragePercent && logThreshold >= 10) || 
+    if ((logThreshold > lastLoggedStoragePercent && logThreshold >= 10) ||
         (percentUsed >= STORAGE_LOG_THRESHOLD && lastLoggedStoragePercent < STORAGE_LOG_THRESHOLD)) {
       lastLoggedStoragePercent = logThreshold;
     }
@@ -485,7 +493,7 @@ function insertFlagElement(container, flagSpan, screenName) {
   } catch { return false; }
 }
 
-// Compact location chips — vanilla CSS, no external deps
+// Location chips — shared density with bot chips, content-sized for X flex rows
 const LOCATION_UI_STYLES = `
 @keyframes xat-shimmer {
   0% { background-position: 200% 0; }
@@ -495,7 +503,12 @@ const LOCATION_UI_STYLES = `
 .xat-flag,
 .xat-flag-shimmer {
   box-sizing: border-box;
-  flex: 0 0 auto;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  width: max-content !important;
+  max-width: max-content !important;
   font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -505,18 +518,21 @@ const LOCATION_UI_STYLES = `
   align-items: center;
   justify-content: center;
   height: 18px;
-  margin: 0 2px 0 4px;
+  min-height: 18px;
+  margin: 0 0 0 3px;
   padding: 0 2px;
   vertical-align: middle;
   line-height: 1;
   font-size: 14px;
   color: inherit;
   user-select: none;
+  white-space: nowrap;
 }
 
 .xat-flag--text {
   height: 18px;
-  max-width: 7.5em;
+  max-width: 7.5em !important;
+  width: max-content !important;
   padding: 0 6px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -525,16 +541,18 @@ const LOCATION_UI_STYLES = `
   border: 1px solid rgba(113, 118, 123, 0.3);
   background: rgba(113, 118, 123, 0.1);
   font-size: 10px;
-  font-weight: 600;
+  font-weight: 650;
   letter-spacing: 0.01em;
   color: #71767b;
 }
 
 .xat-flag-shimmer {
   display: inline-block;
-  width: 16px;
+  width: 16px !important;
+  max-width: 16px !important;
+  min-width: 16px !important;
   height: 12px;
-  margin: 0 2px 0 4px;
+  margin: 0 0 0 3px;
   vertical-align: middle;
   border-radius: 999px;
   background: linear-gradient(

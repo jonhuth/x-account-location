@@ -1,138 +1,83 @@
-# Twitter Account Location Flag Chrome Extension
+# X Account Tools
 
-A Chrome extension that displays country flag emojis next to Twitter/X usernames based on the account's location information, plus tools to manage your Twitter interests.
+Location flags, bot detection, and power tools for X/Twitter.
+
+- **Chrome** — fast R&D (load unpacked)
+- **Safari (iOS + macOS)** — product surface (App Store / TestFlight shell)
+
+Shared code is a Manifest V3 WebExtension under [`extension/`](./extension/).
 
 ## Features
 
-### Location Flags
-- Automatically detects usernames on Twitter/X pages
-- Queries Twitter's GraphQL API to get account location information
-- Displays the corresponding country flag emoji next to usernames
-- Works with dynamically loaded content (infinite scroll)
-- Caches location data to minimize API calls
-- Shows statistics of profiles by country
+### Location Flags (Safari MVP)
+- Detects usernames on x.com / twitter.com
+- Uses X’s GraphQL About Account API (page context, your session)
+- Country flag emoji next to usernames
+- Works with infinite scroll; caches locations locally
 
-### Clean Interests Tool
-- Removes all unwanted interests from your Twitter account
-- Automatically checks interests matching your preferred list
-- Monitors for dynamically loaded interests as you scroll
-- Customizable interest list via `myInterests.js`
-
-## Installation
-
-1. Clone or download this repository
-2. Open Chrome and navigate to `chrome://extensions/`
-3. Enable "Developer mode" (toggle in the top right)
-4. Click "Load unpacked"
-5. Select the directory containing this extension
-6. The extension will now be active on Twitter/X pages
-
-## Usage
-
-### Location Flags
-Location flags appear automatically next to usernames when browsing Twitter/X. Use the popup to:
-- Toggle the extension on/off
-- View statistics of profiles by country
-- Reset statistics
+### Bot Detection
+- Client-first resolution (whitelist, follow trust, cache, local filters)
+- Optional Claude Haiku classification via Railway backend
+- Badges, dimming, quick actions
 
 ### Clean Interests
-1. Navigate to `x.com/settings/your_twitter_data/twitter_interests`
-2. Click the extension icon
-3. Click "Clean Interests"
-4. Scroll down the page to load more interests (the tool monitors for new ones)
+- Desktop-oriented tool for Twitter interests settings
+- Prefer Chrome or macOS Safari; not the iOS MVP path
 
-### Customizing Your Interests
-Edit `myInterests.js` to set your preferred interests:
+## Install — Chrome
 
-```javascript
-const MY_INTERESTS = [
-  // Tech & Crypto
-  'Tech', 'Technology',
-  'Crypto', 'Cryptocurrency', 'Bitcoin', 'Ethereum',
-  
-  // Finance & Business
-  'Finance', 'Financial',
-  'Accounting',
-  // ... add your interests here
-];
+1. Clone this repo
+2. `chrome://extensions/` → Developer mode → **Load unpacked**
+3. Select the **`extension/`** directory (not the repo root)
+4. Open x.com
+
+## Install — Safari (macOS + iOS)
+
+Requires a **Mac with Xcode**. Packaging cannot be completed on Linux alone.
+
+```bash
+./safari/convert.sh          # generates safari/Xcode/
+open safari/Xcode/*.xcodeproj
 ```
 
-The tool uses fuzzy matching, so adding "Tech" will match "Technology", "Tech news", etc.
+Then follow **[safari/TESTING.md](./safari/TESTING.md)** for:
 
-## Files
+- macOS Safari developer enable + site permissions
+- iOS device / Simulator run from Xcode
+- TestFlight personal install
+- Flags-first success checklist
 
-- `manifest.json` - Chrome extension configuration
-- `content.js` - Main content script that processes the page and injects page scripts for API calls
-- `countryFlags.js` - Country name to flag emoji mapping
-- `myInterests.js` - **Your preferred interests list (edit this!)**
-- `popup.html` - Extension popup UI
-- `popup.js` - Popup functionality (toggle, stats, clean interests)
-- `pageScript.js` - Page-injected script for API calls
-- `README.md` - This file
+**Important:** Use **Safari → x.com**, not the X app. Mobile Chrome/Brave cannot run this extension.
 
-## Technical Details
+## Backend (bot AI)
 
-### Location Flags
-The extension uses a page script injection approach to make API requests. This allows it to:
-- Access the same cookies and authentication as the logged-in user
-- Make same-origin requests to Twitter's API without CORS issues
-- Work seamlessly with Twitter's authentication system
-
-The content script injects a script into the page context that listens for location fetch requests. When a username is detected, the content script sends a custom event to the page script, which makes the API request and returns the location data.
-
-### Clean Interests
-The clean interests tool uses `chrome.scripting.executeScript` to inject a script that:
-1. Finds all checkbox elements on the interests page
-2. Compares their labels against your preferred interests
-3. Unchecks anything not in your list
-4. Checks anything matching your interests
-5. Monitors for dynamically loaded interests via MutationObserver
-
-## API Endpoint
-
-The extension uses Twitter's GraphQL API endpoint:
-```
-https://x.com/i/api/graphql/XRqGa7EeokUU5kppkh13EA/AboutAccountQuery
+```bash
+cd backend
+bun install
+bun run dev      # :3000
 ```
 
-With variables:
-```json
-{
-  "screenName": "username"
-}
+Env: `ANTHROPIC_API_KEY=sk-ant-...`  
+Production: `https://x-bot-detector-production.up.railway.app`
+
+## Repo layout
+
+```text
+extension/     Shared MV3 sources (Chrome + Safari)
+safari/        convert.sh, TESTING.md, generated Xcode (gitignored)
+backend/       Bun/Hono classify API
 ```
 
-The response contains `account_based_in` field in:
-```
-data.user_result_by_screen_name.result.about_profile.account_based_in
-```
+## Monetization direction
 
-## Limitations
-
-- Requires the user to be logged into Twitter/X
-- Only works for accounts that have location information available
-- Country names must match the mapping in `countryFlags.js` (case-insensitive)
-- Rate limiting may apply if making too many requests
+Safari is intended as a **paid niche** product (paid app, IAP, or backend sub for AI). Chrome can stay free for personal use / R&D. StoreKit + license unlock in the containing app is a follow-up after flags ship on TestFlight.
 
 ## Privacy
 
-- The extension only queries public account information
-- No data is stored or transmitted to third-party servers
-- All API requests are made directly to Twitter/X servers
-- Location data is cached locally in memory and browser storage
-
-## Troubleshooting
-
-If flags are not appearing:
-1. Make sure you're logged into Twitter/X
-2. Check the browser console for any error messages
-3. Verify that the account has location information available
-4. Try refreshing the page
-
-If Clean Interests isn't working:
-1. Make sure you're on the Twitter interests page (`x.com/settings/your_twitter_data/twitter_interests`)
-2. Scroll slowly to let interests load
-3. Check the browser console for logs showing which interests are being checked/unchecked
+- Location queries use your logged-in X session in page context
+- Bot classification may call the hosted backend with reply/profile signals
+- Verdicts and location cache stored in extension local storage
+- No analytics SDK in the extension package today
 
 ## License
 

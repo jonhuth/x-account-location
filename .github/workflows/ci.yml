@@ -22,15 +22,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate manifest.json
+      - name: Validate extension/manifest.json
         run: |
-          echo "Validating manifest.json..."
-          cat manifest.json | jq empty
-          echo "✓ manifest.json is valid JSON"
+          echo "Validating extension/manifest.json..."
+          jq empty extension/manifest.json
+          echo "✓ extension/manifest.json is valid JSON"
 
       - name: Check JS syntax
         run: |
-          echo "Checking JavaScript syntax..."
-          for f in *.js; do
+          echo "Checking JavaScript syntax in extension/..."
+          for f in extension/*.js; do
             node --check "$f" && echo "✓ $f"
+          done
+
+      - name: Check required icons
+        run: |
+          for size in 16 32 48 128; do
+            test -f "extension/icons/icon${size}.png" && echo "✓ icon${size}.png"
           done

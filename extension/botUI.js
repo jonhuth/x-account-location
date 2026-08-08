@@ -6,100 +6,129 @@
 // ============================================================================
 
 const BOT_UI_STYLES = `
-/* Shared chip base — matches X username density */
+/* Injected chip system — content-sized, X-density, layout-safe */
+:root {
+  --xat-chip-h: 18px;
+  --xat-chip-fs: 11px;
+  --xat-chip-pad-x: 6px;
+  --xat-chip-gap: 3px;
+  --xat-chip-radius: 999px;
+  --xat-font: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --xat-muted: #71767b;
+  --xat-danger: #f4212e;
+  --xat-warn: #ffad1f;
+  --xat-warn-text: #d97706;
+  --xat-success: #00ba7c;
+  --xat-slop: #c084fc;
+  --xat-slop-bar: #a855f7;
+  --xat-trust: #1d9bf0;
+}
+
+/* Never let X flex rows stretch chips to full name width */
 .bot-badge,
 .bot-hide-btn,
-.bot-skeleton {
+.bot-skeleton,
+.bot-checked {
   box-sizing: border-box;
-  flex: 0 0 auto;
-  max-width: none;
-  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-self: center !important;
+  width: max-content !important;
+  max-width: max-content !important;
+  min-width: 0;
+  font-family: var(--xat-font);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Bot score chip */
 .bot-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  height: 18px;
-  margin-left: 4px;
-  padding: 0 6px;
-  border-radius: 999px;
+  height: var(--xat-chip-h);
+  min-height: var(--xat-chip-h);
+  margin: 0 0 0 var(--xat-chip-gap);
+  padding: 0 var(--xat-chip-pad-x);
+  border-radius: var(--xat-chip-radius);
   border: 1px solid transparent;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--xat-chip-fs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
-  letter-spacing: 0;
+  letter-spacing: 0.01em;
   vertical-align: middle;
   white-space: nowrap;
+  overflow: hidden;
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+  transition: filter 0.12s ease, background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
 }
 
-.bot-badge:hover {
-  filter: brightness(1.08);
+.bot-badge:hover { filter: brightness(1.08); }
+.bot-badge:focus-visible {
+  outline: 2px solid var(--xat-trust);
+  outline-offset: 1px;
 }
 
 @keyframes bot-badge-enter {
   from { opacity: 0; transform: translateY(1px); }
   to { opacity: 1; transform: translateY(0); }
 }
+.bot-badge-enter { animation: bot-badge-enter 0.14s ease-out both; }
 
-.bot-badge-enter {
-  animation: bot-badge-enter 0.14s ease-out both;
-}
-
-/* High confidence bot */
 .bot-badge-high {
   background: rgba(244, 33, 46, 0.16);
   border-color: rgba(244, 33, 46, 0.45);
-  color: #f4212e;
+  color: var(--xat-danger);
 }
-
-/* Medium confidence */
 .bot-badge-medium {
   background: rgba(255, 173, 31, 0.16);
   border-color: rgba(255, 173, 31, 0.45);
-  color: #d97706;
+  color: var(--xat-warn-text);
 }
-
-/* Low / uncertain */
 .bot-badge-low {
   background: rgba(113, 118, 123, 0.14);
   border-color: rgba(113, 118, 123, 0.35);
-  color: #71767b;
+  color: var(--xat-muted);
 }
-
-/* Human */
 .bot-badge-human {
   background: rgba(0, 186, 124, 0.12);
   border-color: rgba(0, 186, 124, 0.35);
-  color: #00ba7c;
+  color: var(--xat-success);
 }
-
-/* Pending */
+.bot-badge-slop {
+  background: rgba(168, 85, 247, 0.14);
+  border-color: rgba(168, 85, 247, 0.45);
+  color: var(--xat-slop);
+}
+.bot-badge-trust {
+  background: rgba(29, 155, 240, 0.12);
+  border-color: rgba(29, 155, 240, 0.35);
+  color: var(--xat-trust);
+}
 .bot-badge-pending {
   background: rgba(113, 118, 123, 0.12);
   border-color: rgba(113, 118, 123, 0.25);
-  color: #71767b;
-  min-width: 28px;
+  color: var(--xat-muted);
+  min-width: 28px !important;
+  width: 28px !important;
+  max-width: 28px !important;
+  padding: 0;
+  cursor: default;
 }
 
-/* Hide-again chip */
 .bot-hide-btn {
   display: inline-flex;
   align-items: center;
-  height: 18px;
-  margin-left: 4px;
+  height: var(--xat-chip-h);
+  margin: 0 0 0 var(--xat-chip-gap);
   padding: 0 7px;
-  border-radius: 999px;
+  border-radius: var(--xat-chip-radius);
   border: 1px solid rgba(113, 118, 123, 0.35);
   background: rgba(15, 20, 25, 0.04);
-  color: #71767b;
-  font-size: 11px;
+  color: var(--xat-muted);
+  font-size: var(--xat-chip-fs);
   font-weight: 600;
   line-height: 1;
   vertical-align: middle;
@@ -107,65 +136,36 @@ const BOT_UI_STYLES = `
   cursor: pointer;
   transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
 }
-
 .bot-hide-btn:hover {
   background: rgba(113, 118, 123, 0.16);
   border-color: rgba(113, 118, 123, 0.5);
   color: inherit;
 }
 
-/* Dimmed bot reply — no blur (keeps layout crisp) */
+/* Dim / accent — no layout reflow */
 .bot-reply-dimmed {
   opacity: 0.32 !important;
   transition: opacity 0.18s ease;
 }
+.bot-reply-dimmed:hover,
+.bot-reply-dimmed:focus-within { opacity: 0.72 !important; }
 
-.bot-reply-dimmed:hover {
-  opacity: 0.72 !important;
-}
-
-/* Slop (human but low-info) — lighter dim than hard bots */
 .bot-reply-slop {
   opacity: 0.55 !important;
   transition: opacity 0.18s ease;
 }
+.bot-reply-slop:hover,
+.bot-reply-slop:focus-within { opacity: 0.88 !important; }
 
-.bot-reply-slop:hover {
-  opacity: 0.88 !important;
-}
+.bot-reply-flagged { box-shadow: inset 3px 0 0 var(--xat-danger) !important; }
+.bot-reply-flagged-medium { box-shadow: inset 3px 0 0 var(--xat-warn) !important; }
+.bot-reply-flagged-slop { box-shadow: inset 3px 0 0 var(--xat-slop-bar) !important; }
 
-/* Layout-safe accent: inset shadow, no padding/border reflow */
-.bot-reply-flagged {
-  box-shadow: inset 3px 0 0 #f4212e !important;
-}
-
-.bot-reply-flagged-medium {
-  box-shadow: inset 3px 0 0 #ffad1f !important;
-}
-
-.bot-reply-flagged-slop {
-  box-shadow: inset 3px 0 0 #a855f7 !important;
-}
-
-/* Slop badge */
-.bot-badge-slop {
-  background: rgba(168, 85, 247, 0.14);
-  border-color: rgba(168, 85, 247, 0.45);
-  color: #c084fc;
-}
-
-/* Trust / followed */
-.bot-badge-trust {
-  background: rgba(29, 155, 240, 0.12);
-  border-color: rgba(29, 155, 240, 0.35);
-  color: #1d9bf0;
-}
-
-/* Hover quick actions */
+/* Quick actions — desktop hover + always reachable via badge click path */
 .bot-actions {
   position: absolute;
-  top: 6px;
-  right: 48px;
+  top: 8px;
+  right: 12px;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -175,7 +175,7 @@ const BOT_UI_STYLES = `
   z-index: 50;
   pointer-events: none;
 }
-
+.bot-actions.bot-actions--open,
 article[data-testid="tweet"]:hover > .bot-actions,
 article[data-testid="tweet"]:focus-within > .bot-actions {
   opacity: 1;
@@ -183,62 +183,69 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
   pointer-events: auto;
 }
 
+/* Touch / narrow: keep actions near content, not under X chrome */
+@media (hover: none), (max-width: 500px) {
+  .bot-actions {
+    top: auto;
+    bottom: 8px;
+    right: 12px;
+    left: auto;
+  }
+}
+
 .bot-action-btn {
   display: inline-flex;
   align-items: center;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(113, 118, 123, 0.35);
-  background: rgba(0, 0, 0, 0.72);
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--xat-chip-radius);
+  border: 1px solid rgba(113, 118, 123, 0.4);
+  background: rgba(0, 0, 0, 0.78);
   color: #e7e9ea;
-  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--xat-font);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   line-height: 1;
   white-space: nowrap;
   cursor: pointer;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.28);
   transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
-
-.bot-action-whitelist {
-  color: #00ba7c;
+.bot-action-btn:focus-visible {
+  outline: 2px solid var(--xat-trust);
+  outline-offset: 1px;
 }
-
+.bot-action-whitelist { color: var(--xat-success); }
 .bot-action-whitelist:hover {
-  background: rgba(0, 186, 124, 0.18);
+  background: rgba(0, 186, 124, 0.2);
   border-color: rgba(0, 186, 124, 0.55);
-  color: #00ba7c;
+  color: var(--xat-success);
 }
-
-.bot-action-block {
-  color: #f4212e;
-}
-
+.bot-action-block { color: var(--xat-danger); }
 .bot-action-block:hover {
-  background: rgba(244, 33, 46, 0.16);
-  border-color: rgba(244, 33, 46, 0.5);
-  color: #f4212e;
+  background: rgba(244, 33, 46, 0.18);
+  border-color: rgba(244, 33, 46, 0.55);
+  color: var(--xat-danger);
 }
 
-/* Toast */
 .bot-toast {
   position: fixed;
-  bottom: 28px;
+  bottom: max(24px, env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
+  max-width: min(90vw, 360px);
   padding: 10px 16px;
-  border-radius: 999px;
-  border: 1px solid rgba(113, 118, 123, 0.3);
-  background: rgba(15, 20, 25, 0.92);
+  border-radius: var(--xat-chip-radius);
+  border: 1px solid rgba(113, 118, 123, 0.35);
+  background: rgba(15, 20, 25, 0.94);
   color: #e7e9ea;
-  font-family: TwitterChirp, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--xat-font);
   font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-weight: 650;
+  line-height: 1.25;
+  text-align: center;
   z-index: 10000;
   pointer-events: none;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
@@ -247,25 +254,24 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
   animation: bot-toast-in 0.18s ease-out both;
   transition: opacity 0.15s ease, transform 0.15s ease;
 }
-
 @keyframes bot-toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
-/* Pending skeleton */
 @keyframes bot-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-
 .bot-skeleton {
   display: inline-block;
-  width: 32px;
+  width: 30px !important;
+  max-width: 30px !important;
+  min-width: 30px !important;
   height: 14px;
-  margin-left: 4px;
+  margin: 0 0 0 var(--xat-chip-gap);
   vertical-align: middle;
-  border-radius: 999px;
+  border-radius: var(--xat-chip-radius);
   background: linear-gradient(
     90deg,
     rgba(113, 118, 123, 0.12) 0%,
@@ -276,14 +282,15 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
   animation: bot-shimmer 1.2s ease-in-out infinite;
 }
 
-/* Subtle human check dot (legacy helper) */
 .bot-checked {
   display: inline-block;
-  width: 6px;
+  width: 6px !important;
+  max-width: 6px !important;
+  min-width: 6px !important;
   height: 6px;
-  margin-left: 4px;
+  margin: 0 0 0 var(--xat-chip-gap);
   border-radius: 50%;
-  background: #00ba7c;
+  background: var(--xat-success);
   opacity: 0.45;
   vertical-align: middle;
 }
@@ -394,7 +401,11 @@ function buildTooltip(verdict) {
 function createBotBadge(verdict, animate = true) {
   const badge = document.createElement('span');
   badge.setAttribute('data-bot-badge', 'true');
+  badge.setAttribute('role', 'button');
+  badge.tabIndex = 0;
 
+  // Compact fixed vocabulary: color = class, text = score (or short tag).
+  // Avoids long labels that reflow the name row on mobile Safari.
   const conf = Math.round((verdict.confidence || 0) * 100);
   let severity = 'pending';
   let text = '···';
@@ -404,32 +415,29 @@ function createBotBadge(verdict, animate = true) {
     severity = 'pending';
     text = '···';
     title = 'Analyzing…';
+    badge.tabIndex = -1;
+    badge.removeAttribute('role');
   } else if (verdict.source === 'trust' || verdict.trustTier === 'following') {
     severity = 'trust';
-    text = `✓ ${conf}`;
+    text = `✓${conf}`;
     title = buildTooltip(verdict);
   } else if (verdict.isBot) {
     severity = getSeverityLevel(verdict.confidence || 0);
-    if (severity === 'high') {
-      text = `bot ${conf}`;
-    } else if (severity === 'medium') {
-      text = `? ${conf}`;
-    } else {
-      text = `~ ${conf}`;
-    }
+    text = String(conf);
     title = buildTooltip(verdict);
   } else if (verdict.isSlop) {
     severity = 'slop';
-    text = `slop ${conf}`;
+    text = `s${conf}`;
     title = buildTooltip(verdict);
   } else {
     severity = 'human';
-    text = `✓ ${conf}`;
+    text = `✓${conf}`;
     title = buildTooltip(verdict);
   }
 
   badge.textContent = text;
   badge.title = title;
+  badge.setAttribute('aria-label', title.split('\n')[0] || 'Bot score');
   badge.className = `bot-badge bot-badge-${severity}${animate ? ' bot-badge-enter' : ''}`;
 
   return badge;
@@ -605,11 +613,15 @@ function applyBotUI(replyElement, verdict, username) {
   // ALWAYS show a score badge (human, slop, or bot)
   if (userNameContainer) {
     const badge = createBotBadge(verdict, true);
-    // Click badge → feedback actions
-    badge.addEventListener('click', (e) => {
+    const openActions = (e) => {
       e.stopPropagation();
       e.preventDefault();
       addQuickActions(container, resolvedUsername, true);
+    };
+    // Click / keyboard → feedback actions (touch path without hover)
+    badge.addEventListener('click', openActions);
+    badge.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') openActions(e);
     });
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
@@ -701,12 +713,7 @@ function addQuickActions(container, username, forceShow = false) {
   if (!resolvedUsername) return;
   
   const actions = document.createElement('div');
-  actions.className = 'bot-actions';
-  if (forceShow) {
-    actions.style.opacity = '1';
-    actions.style.pointerEvents = 'auto';
-    actions.style.transform = 'translateY(0)';
-  }
+  actions.className = forceShow ? 'bot-actions bot-actions--open' : 'bot-actions';
 
   const humanBtn = document.createElement('button');
   humanBtn.type = 'button';

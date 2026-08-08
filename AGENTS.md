@@ -1,24 +1,30 @@
 # X Account Tools - AGENTS.md
 
-Chrome extension for bot detection, location flags, and tools on X/Twitter.
+Browser extension for bot detection, location flags, and tools on X/Twitter.
 
-## Architecture (v2)
+**Surface strategy:** Chrome = R&D loop. **Safari (iOS/macOS) = product** (paid niche / App Store). Flags-first MVP on iOS Safari; keep X in the browser, not the app.
+
+## Architecture (v2.2)
 
 ```
 x-account-location/
-├── manifest.json          # MV3 extension manifest
-├── popup.html/js          # Extension popup UI (tabs: Bot Detection, Location, Tools)
-├── content.js             # Main content script - coordinates all features
-├── pageScript.js          # Injected page script - location API only
-├── countryFlags.js        # Country name to flag emoji mapping
-├── botDetection.js        # Minimal local checks (DOM extraction, should-classify logic)
-├── botCache.js            # Caching, batching, circuit breaker, timeout/retry
-├── botUI.js               # Bot detection UI (badges, dimming, quick actions)
-└── backend/               # Bun/Hono server - ALL bot classification via AI
-    └── src/
-        ├── index.ts       # Server with CORS, per-endpoint rate limiting
-        ├── routes/        # /classify (batch), /lookup (single)
-        └── lib/           # Anthropic client, system prompt, response parsing
+├── extension/             # Shared MV3 WebExtension (Chrome + Safari source of truth)
+│   ├── manifest.json
+│   ├── popup.html/js      # Tabs: Bot Detection, Location, Tools
+│   ├── content.js         # Coordinates all features
+│   ├── pageScript.js      # Injected page script — location API only
+│   ├── countryFlags.js
+│   ├── botDetection.js    # DOM extraction, should-classify
+│   ├── botCache.js        # Cache, batching, circuit breaker
+│   ├── botUI.js           # Badges, dimming, quick actions
+│   └── icons/
+├── safari/                # Mac packaging (converter + testing docs)
+│   ├── convert.sh         # xcrun safari-web-extension-converter (macOS only)
+│   ├── TESTING.md         # iOS + macOS install/test steps
+│   └── Xcode/             # generated, gitignored
+├── backend/               # Bun/Hono — bot classification via AI
+│   └── src/
+└── icons/                 # convenience symlinks → extension/icons
 ```
 
 ## Key Design Decisions
@@ -34,6 +40,13 @@ x-account-location/
 
 Following list is paginated slowly in the background (capped pages, delays) and cached 24h.
 `userFollows` is client-only so shared server cache stays non-personalized.
+
+### Safari compatibility
+- Prefer durable `chrome.*` APIs (Safari Web Extensions support the Chrome namespace).
+- Do **not** gate storage writes on `getBytesInUse` — Safari often lacks it; missing API must mean “allow write.”
+- iOS: no unpacked load; must build via Xcode containing app. Per-site permission UX is required.
+- Content-script driven (no required background service worker) — fits non-persistent iOS model.
+- Clean Interests uses `scripting.executeScript` — desktop-oriented; not the iOS MVP.
 
 ### Performance Optimizations
 - **Debounced observers**: 300ms mutation, 500ms scroll
@@ -110,11 +123,20 @@ try {
 
 ## Development
 
-### Testing
-1. `chrome://extensions/` → Developer mode → Load unpacked
+### Chrome (any machine)
+1. `chrome://extensions/` → Developer mode → **Load unpacked** → select **`extension/`**
 2. Navigate to x.com
-3. After changes: click refresh icon on extension card
+3. After changes: refresh icon on extension card
 4. Console: `window.debugShowTweets()` or `window.forceReprocessBots()`
+
+### Safari (macOS host with Xcode)
+```bash
+./safari/convert.sh
+open safari/Xcode/*.xcodeproj
+```
+Full device + Simulator steps: **`safari/TESTING.md`**.
+
+Linux agents cannot run the converter or Xcode — prepare sources here; package on a Mac.
 
 ### Backend
 ```bash
@@ -150,6 +172,11 @@ window.forceReprocessBots() // Reprocess all tweets
 - Check `botDetectionEnabled` in storage
 - Check network tab for backend requests
 - Look for circuit breaker logs
+
+**Flags missing on Safari**
+- Extension enabled + **x.com allowed** (Safari per-site permissions)
+- Using Safari, not the X app
+- Rebuild/reinstall after Xcode changes
 
 **"X is not a function"**
 - Add defensive type coercion
