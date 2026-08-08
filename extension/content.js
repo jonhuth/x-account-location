@@ -1056,18 +1056,20 @@ async function processBotDetection(el) {
     }
   }
 
-  // Status/detail only: near-duplicate replies across low-follower alts
+  // Status/detail only: near-duplicate reply *clusters* (2+ look-alike alts)
   const threadDup = window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
   if (threadDup?.verdict) {
     window.BotCache?.saveBotCache?.(username, threadDup.verdict);
     window.BotUI?.applyBotUI?.(el, threadDup.verdict, username);
     el.dataset.botProcessed = 'bot';
     el.dataset.botUsername = username.toLowerCase();
-    if (threadDup.peerUsername) {
-      window.BotDetection?.applyThreadDuplicateToPeer?.(
-        threadDup.peerUsername,
-        threadDup.verdict,
-      );
+    const peers = Array.isArray(threadDup.peerUsernames)
+      ? threadDup.peerUsernames
+      : threadDup.peerUsername
+        ? [threadDup.peerUsername]
+        : [];
+    if (peers.length > 0) {
+      window.BotDetection?.applyThreadDuplicateToCluster?.(peers, threadDup.verdict);
     }
     return;
   }
