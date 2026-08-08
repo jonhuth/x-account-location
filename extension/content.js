@@ -853,6 +853,8 @@ function setupObservers() {
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      // Drop thread-reply index when leaving a status page / switching tweets
+      window.BotDetection?.clearThreadReplyRegistry?.();
       setTimeout(() => {
         if (extensionEnabled) processUsernamesThrottled();
         if (botDetectionEnabled) scheduleBotProcessing();
@@ -1048,8 +1050,26 @@ async function processBotDetection(el) {
           ? 'slop'
           : 'human';
       el.dataset.botUsername = username.toLowerCase();
+      // Still index for thread dup so a later peer can match (detail views)
+      window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
       return;
     }
+  }
+
+  // Status/detail only: near-duplicate replies across low-follower alts
+  const threadDup = window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
+  if (threadDup?.verdict) {
+    window.BotCache?.saveBotCache?.(username, threadDup.verdict);
+    window.BotUI?.applyBotUI?.(el, threadDup.verdict, username);
+    el.dataset.botProcessed = 'bot';
+    el.dataset.botUsername = username.toLowerCase();
+    if (threadDup.peerUsername) {
+      window.BotDetection?.applyThreadDuplicateToPeer?.(
+        threadDup.peerUsername,
+        threadDup.verdict,
+      );
+    }
+    return;
   }
 
   const quickCheck = window.BotDetection?.shouldClassify?.(
