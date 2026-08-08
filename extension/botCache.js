@@ -89,8 +89,32 @@ async function loadBotCache() {
 }
 
 function saveBotCache(username, verdict) {
+	const key = String(username || "").toLowerCase();
 	const now = Date.now();
 	const confidence = verdict.confidence || 0;
+
+	// Never let short-reply / bot verdicts overwrite mutual or following hard-trust
+	const existing = botVerdictCache.get(key);
+	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
+	const liveTier = L?.getTrustTier?.(key);
+	if (
+		L?.isHardTrustTier?.(liveTier) &&
+		(verdict.isBot || verdict.isSlop || verdict.source === "local")
+	) {
+		return;
+	}
+	if (
+		existing &&
+		L?.isHardTrustTier?.(existing.trustTier) &&
+		!existing.isBot &&
+		(verdict.isBot || verdict.isSlop) &&
+		verdict.source !== "trust" &&
+		verdict.trustTier !== "mutual" &&
+		verdict.trustTier !== "following"
+	) {
+		return;
+	}
+
 	let expiryDays;
 	if (confidence >= 0.75) expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
 	else if (confidence >= 0.5) expiryDays = BOT_CACHE_EXPIRY_MED_CONF_DAYS;
@@ -105,7 +129,6 @@ function saveBotCache(username, verdict) {
 	}
 
 	const expiry = now + expiryDays * 24 * 60 * 60 * 1000;
-	const key = username.toLowerCase();
 
 	botVerdictCache.set(key, {
 		...normalizeVerdict(verdict),
@@ -445,12 +468,17 @@ async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
 
 /**
  * Resolve a verdict with zero X load and minimal backend load.
- * Order: override → follow trust → cache → local template → account prior → queue server
+ * Order: override → whitelist → mutual/follow hard-trust → cache → local template → account prior → server
+ *
+ * Mutual follow is the strongest positive signal we have. Short engagement
+ * templates (localClassify) and reply-level slop must never demote mutuals or
+ * accounts you follow.
  */
 function resolveLocally(username, replyData, opts = {}) {
 	const key = String(username || "").toLowerCase();
+	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
 
-	// 1. Personal override
+	// 1. Personal override (explicit user judgment wins)
 	const overrideV = getOverrideVerdict(key);
 	if (overrideV) return overrideV;
 
@@ -468,23 +496,38 @@ function resolveLocally(username, replyData, opts = {}) {
 		};
 	}
 
-	// 3. Follow hard-trust (personalized — never send to multi-tenant server)
+	// 3. Social hard-trust: mutual > following (personalized — never multi-tenant)
 	const userFollows =
 		opts.userFollows === true ||
 		replyData?.userFollows === true ||
-		(typeof window !== "undefined" &&
-			window.BotLegitimacy?.isFollowedByUser?.(key));
-	if (userFollows) {
+		Boolean(L?.isFollowedByUser?.(key));
+	const isMutual =
+		opts.isMutual === true ||
+		replyData?.trustTier === "mutual" ||
+		Boolean(L?.isMutualWithUser?.(key));
+	const trustTier =
+		opts.trustTier ||
+		(isMutual ? "mutual" : userFollows ? "following" : L?.getTrustTier?.(key) || "none");
+
+	if (trustTier === "mutual" || trustTier === "following" || userFollows || isMutual) {
+		const tier = isMutual || trustTier === "mutual" ? "mutual" : "following";
 		return (
-			window.BotLegitimacy?.createFollowTrustVerdict?.(key) || {
+			L?.createTrustVerdict?.(key, tier) ||
+			L?.createFollowTrustVerdict?.(key) || {
 				isBot: false,
 				isSlop: false,
-				confidence: 0.96,
+				confidence: tier === "mutual" ? 0.99 : 0.96,
 				category: "genuine",
-				reason: "Account you follow",
-				signals: ["user_follows", "hard_trust"],
+				reason:
+					tier === "mutual"
+						? "Mutual follow — highest trust signal"
+						: "Account you follow",
+				signals:
+					tier === "mutual"
+						? ["mutual_follow", "user_follows", "followed_by", "hard_trust"]
+						: ["user_follows", "hard_trust"],
 				source: "trust",
-				trustTier: "following",
+				trustTier: tier,
 			}
 		);
 	}
@@ -492,19 +535,34 @@ function resolveLocally(username, replyData, opts = {}) {
 	// 4. Session/storage cache
 	const cached = getCachedVerdict(key);
 	if (cached && opts.allowCache !== false) {
-		// If we have a new reply that local-filters as slop, don't let a stale "human" cache win
+		// Never keep a cached bot/slop if we somehow have hard-trust on the verdict already
+		if (
+			(cached.trustTier === "mutual" ||
+				cached.trustTier === "following" ||
+				cached.source === "trust") &&
+			!cached.isBot
+		) {
+			return cached;
+		}
+
+		// Short-reply local filters may upgrade *strangers* from stale human → slop,
+		// but must never run against hard-trust tiers (handled above).
 		const local = window.BotDetection?.localClassify?.(replyData);
 		if (local && local.isSlop && !cached.isBot && !cached.isSlop) {
+			// Guard: if cached says trust, keep trust
+			if (L?.isHardTrustTier?.(cached.trustTier)) {
+				return cached;
+			}
 			return { ...local, accountScore: cached.accountScore };
 		}
 		return cached;
 	}
 
-	// 5. Local template prefilter
+	// 5. Local template prefilter (short comments / engagement farm) — strangers only
 	const local = window.BotDetection?.localClassify?.(replyData);
 	if (local) return local;
 
-	// 6. Strong account prior
+	// 6. Strong account prior (never applied to hard-trust — already returned)
 	const prior = getAccountPriorVerdict(key);
 	if (prior) return prior;
 

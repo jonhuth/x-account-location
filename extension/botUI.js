@@ -417,9 +417,15 @@ function createBotBadge(verdict, animate = true) {
     title = 'Analyzing…';
     badge.tabIndex = -1;
     badge.removeAttribute('role');
-  } else if (verdict.source === 'trust' || verdict.trustTier === 'following') {
+  } else if (
+    verdict.source === 'trust' ||
+    verdict.trustTier === 'following' ||
+    verdict.trustTier === 'mutual' ||
+    verdict.trustTier === 'whitelist'
+  ) {
     severity = 'trust';
-    text = `✓${conf}`;
+    // Mutuals: compact mark; following/whitelist share trust styling
+    text = verdict.trustTier === 'mutual' ? `↔${conf}` : `✓${conf}`;
     title = buildTooltip(verdict);
   } else if (verdict.isBot) {
     severity = getSeverityLevel(verdict.confidence || 0);
