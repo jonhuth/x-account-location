@@ -24,11 +24,46 @@ const BOT_UI_STYLES = `
   --xat-trust: #1d9bf0;
 }
 
+/*
+ * Shared host for flag + bot chips — lives on the *first line* of User-Name
+ * (same flex row as display name / verified), never as a column flex child
+ * under the whole User-Name block (that pushes chips under the name).
+ */
+.xat-chip-host {
+  box-sizing: border-box;
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex: 0 0 auto !important;
+  flex-grow: 0 !important;
+  flex-shrink: 0 !important;
+  align-items: center !important;
+  align-self: center !important;
+  justify-content: flex-start;
+  gap: 2px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  width: max-content !important;
+  max-width: max-content !important;
+  min-width: 0;
+  height: auto;
+  max-height: var(--xat-chip-h);
+  line-height: 1;
+  white-space: nowrap !important;
+  vertical-align: middle;
+  overflow: visible;
+  pointer-events: auto;
+  /* Stay in flow with name; never stretch full row width */
+  position: static !important;
+  float: none !important;
+  clear: none !important;
+}
+
 /* Never let X flex rows stretch chips to full name width */
 .bot-badge,
 .bot-hide-btn,
 .bot-skeleton,
-.bot-checked {
+.bot-checked,
+.xat-chip-host > * {
   box-sizing: border-box;
   flex: 0 0 auto !important;
   flex-grow: 0 !important;
@@ -48,7 +83,7 @@ const BOT_UI_STYLES = `
   gap: 2px;
   height: var(--xat-chip-h);
   min-height: var(--xat-chip-h);
-  margin: 0 0 0 var(--xat-chip-gap);
+  margin: 0; /* host gap handles spacing next to flag */
   padding: 0 var(--xat-chip-pad-x);
   border-radius: var(--xat-chip-radius);
   border: 1px solid transparent;
@@ -485,11 +520,250 @@ function createHideAgainButton(container) {
 }
 
 // ============================================================================
-// Reply Element Processing
+// Reply Element Processing + first-line chip host
 // ============================================================================
 
 function getReplyContainer(element) {
   return element.closest('article[data-testid="tweet"]') || element;
+}
+
+/** Resolve User-Name root whether `from` is the root, an ancestor, or a child. */
+function getUserNameRoot(from) {
+  if (!from) return null;
+  if (from.matches?.('[data-testid="UserName"], [data-testid="User-Name"]')) return from;
+  return (
+    from.querySelector?.('[data-testid="UserName"], [data-testid="User-Name"]') ||
+    from.closest?.('[data-testid="UserName"], [data-testid="User-Name"]') ||
+    null
+  );
+}
+
+function isHandleLink(link) {
+  if (!link) return false;
+  if (link.querySelector('time')) return true;
+  const text = String(link.textContent || '').trim();
+  return text.startsWith('@');
+}
+
+function hrefMatchesScreen(link, screenName) {
+  if (!screenName) return true;
+  const href = link.getAttribute('href') || '';
+  const name = String(screenName).replace(/^@/, '');
+  return href === `/${name}` || href.startsWith(`/${name}?`) || href.startsWith(`/${name}/`);
+}
+
+/**
+ * Display-name <a> on the first line — never the @handle or time link.
+ */
+function findDisplayNameLink(userNameRoot, screenName) {
+  if (!userNameRoot) return null;
+  const links = userNameRoot.querySelectorAll('a[href^="/"]');
+  let fallback = null;
+  for (const link of links) {
+    if (isHandleLink(link)) continue;
+    if (!hrefMatchesScreen(link, screenName) && screenName) {
+      // Keep as weak fallback if no exact match
+      if (!fallback) fallback = link;
+      continue;
+    }
+    return link;
+  }
+  return fallback;
+}
+
+function findHandleLink(userNameRoot, screenName) {
+  if (!userNameRoot) return null;
+  for (const link of userNameRoot.querySelectorAll('a[href^="/"]')) {
+    if (!isHandleLink(link)) continue;
+    if (hrefMatchesScreen(link, screenName)) return link;
+  }
+  return null;
+}
+
+function isFlexRow(el) {
+  if (!el || el.nodeType !== 1) return false;
+  try {
+    const s = window.getComputedStyle(el);
+    const d = s.display || '';
+    if (d !== 'flex' && d !== 'inline-flex') return false;
+    const dir = s.flexDirection || 'row';
+    return dir === 'row' || dir === 'row-reverse';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Innermost flex *row* that contains the display name — the true first line of the card.
+ * Avoids column User-Name wrappers that would stack chips under the name.
+ */
+function findFirstLineRow(displayNameLink, userNameRoot) {
+  if (!displayNameLink) return null;
+  let el = displayNameLink.parentElement;
+  let innermostRow = null;
+  while (el && el !== userNameRoot) {
+    if (isFlexRow(el)) innermostRow = el;
+    el = el.parentElement;
+  }
+  // Prefer innermost row that still has horizontal room for siblings
+  if (innermostRow) return innermostRow;
+  return displayNameLink.parentElement;
+}
+
+/** Direct child of `row` that contains `node`. */
+function directChildContaining(row, node) {
+  if (!row || !node || !row.contains(node)) return null;
+  let child = node;
+  while (child.parentElement && child.parentElement !== row) {
+    child = child.parentElement;
+  }
+  return child.parentElement === row ? child : null;
+}
+
+function isDecorOnly(el) {
+  if (!el || el.nodeType !== 1) return false;
+  if (el.matches?.('[data-xat-chip-host], [data-bot-badge], [data-bot-skeleton], [data-twitter-flag], [data-twitter-flag-shimmer], [data-bot-hide-btn]')) {
+    return false;
+  }
+  // Verified / private lock icons — svg wrappers with no profile links
+  if (el.tagName === 'svg' || el.querySelector?.(':scope > svg, svg')) {
+    if (!el.querySelector?.('a[href^="/"]')) return true;
+  }
+  return false;
+}
+
+/**
+ * Ensure a single inline host on the first line:
+ * [DisplayName] [Verified] [host: flag + badge] [@handle] [time]
+ */
+function ensureChipHost(userNameRoot, screenName) {
+  if (!userNameRoot) return null;
+  injectBotStyles();
+
+  const existing = userNameRoot.querySelector('[data-xat-chip-host]');
+  if (existing && userNameRoot.contains(existing)) {
+    // Re-home if a previous insert landed under a column wrapper
+    if (!isHostOnFirstLine(existing, userNameRoot, screenName)) {
+      placeChipHost(existing, userNameRoot, screenName);
+    }
+    return existing;
+  }
+
+  const host = document.createElement('span');
+  host.setAttribute('data-xat-chip-host', 'true');
+  host.className = 'xat-chip-host';
+  host.setAttribute('aria-hidden', 'false');
+  placeChipHost(host, userNameRoot, screenName);
+  return host;
+}
+
+function isHostOnFirstLine(host, userNameRoot, screenName) {
+  const nameLink = findDisplayNameLink(userNameRoot, screenName);
+  if (!nameLink) return userNameRoot.contains(host);
+  const row = findFirstLineRow(nameLink, userNameRoot);
+  return row ? row.contains(host) : nameLink.parentElement?.contains(host);
+}
+
+function placeChipHost(host, userNameRoot, screenName) {
+  const nameLink = findDisplayNameLink(userNameRoot, screenName);
+  if (!nameLink) {
+    // Last resort: still try not to full-width stack — inline at start of root
+    try {
+      userNameRoot.insertBefore(host, userNameRoot.firstChild);
+    } catch {
+      userNameRoot.appendChild(host);
+    }
+    return;
+  }
+
+  const row = findFirstLineRow(nameLink, userNameRoot);
+  const handleLink = findHandleLink(userNameRoot, screenName);
+
+  // Prefer: same row as display name, after name+verified, before @handle when co-located
+  if (row) {
+    const nameChild = directChildContaining(row, nameLink);
+    const handleChild =
+      handleLink && row.contains(handleLink) ? directChildContaining(row, handleLink) : null;
+
+    if (nameChild) {
+      let insertAfter = nameChild;
+      let next = nameChild.nextElementSibling;
+      while (next && next !== handleChild && isDecorOnly(next)) {
+        insertAfter = next;
+        next = next.nextElementSibling;
+      }
+      // If handle is on this row, sit just before it
+      if (handleChild && insertAfter.nextElementSibling === handleChild) {
+        handleChild.before(host);
+        return;
+      }
+      if (handleChild && row.contains(handleChild) && insertAfter.compareDocumentPosition(handleChild) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        // insert between decor and handle
+        insertAfter.after(host);
+        return;
+      }
+      insertAfter.after(host);
+      return;
+    }
+  }
+
+  // Fallback: after display name link (and trailing verified sibling)
+  let anchor = nameLink;
+  let sib = nameLink.nextElementSibling;
+  while (sib && isDecorOnly(sib)) {
+    anchor = sib;
+    sib = sib.nextElementSibling;
+  }
+  try {
+    anchor.after(host);
+  } catch {
+    nameLink.parentElement?.appendChild(host);
+  }
+}
+
+/**
+ * Insert flag or bot chip into the shared first-line host (stable order).
+ * kind: 'flag' | 'shimmer' | 'badge' | 'skeleton' | 'hide'
+ */
+function insertIntoChipHost(userNameRootOrFrom, el, screenName, kind = 'badge') {
+  const root = getUserNameRoot(userNameRootOrFrom);
+  if (!root || !el) return false;
+
+  // Dedupe same-kind nodes outside host
+  if (kind === 'badge' || kind === 'skeleton') {
+    root.querySelectorAll('[data-bot-badge], [data-bot-skeleton]').forEach((n) => {
+      if (n !== el) n.remove();
+    });
+  }
+  if (kind === 'flag' || kind === 'shimmer') {
+    root.querySelectorAll('[data-twitter-flag], [data-twitter-flag-shimmer]').forEach((n) => {
+      if (n !== el) n.remove();
+    });
+  }
+
+  const host = ensureChipHost(root, screenName);
+  if (!host) return false;
+
+  try {
+    if (kind === 'flag' || kind === 'shimmer') {
+      // Flags leftmost inside host
+      const firstBadge = host.querySelector(
+        '[data-bot-badge], [data-bot-skeleton], [data-bot-hide-btn], .bot-badge, .bot-skeleton',
+      );
+      if (firstBadge) firstBadge.before(el);
+      else host.insertBefore(el, host.firstChild);
+    } else if (kind === 'hide') {
+      host.appendChild(el);
+    } else {
+      // badge / skeleton after flags
+      const hideBtn = host.querySelector('[data-bot-hide-btn]');
+      if (hideBtn) hideBtn.before(el);
+      else host.appendChild(el);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function findHandleSection(container, screenName) {
@@ -501,51 +775,8 @@ function findHandleSection(container, screenName) {
 }
 
 function insertBotBadge(container, badge, screenName) {
-  // Layout goal: [DisplayName] [VerifiedBadge] [Flag] [BotBadge] [@handle] [time]
-  // Container is UserName div - we want to insert INLINE within the first row
-  
-  // PRIORITY 1: After existing flag (keeps flag + badge together)
-  const existingFlag = container.querySelector('[data-twitter-flag]');
-  if (existingFlag) {
-    try { 
-      existingFlag.after(badge); 
-      return true; 
-    } catch { /* continue */ }
-  }
-  
-  // PRIORITY 2: After flag shimmer (flag is loading)
-  const flagShimmer = container.querySelector('[data-twitter-flag-shimmer]');
-  if (flagShimmer) {
-    try { 
-      flagShimmer.after(badge); 
-      return true; 
-    } catch { /* continue */ }
-  }
-  
-  // PRIORITY 3: Find the display name link and insert after it
-  // Look for the first link that is NOT the @handle link
-  const allLinks = container.querySelectorAll('a[href^="/"]');
-  for (const link of allLinks) {
-    const text = link.textContent?.trim() || '';
-    // Skip @handle links
-    if (text.startsWith('@')) continue;
-    // Skip time/date links
-    if (link.querySelector('time')) continue;
-    // This should be the display name link
-    try {
-      link.after(badge);
-      return true;
-    } catch { /* continue */ }
-  }
-  
-  // PRIORITY 4: Insert as first child (fallback for unusual DOM structures)
-  try { 
-    container.insertBefore(badge, container.firstChild?.nextSibling || null); 
-    return true; 
-  } catch { /* continue */ }
-  
-  // FALLBACK: Append to end
-  try { container.appendChild(badge); return true; } catch { return false; }
+  // Layout: first line of card — [Name] [Verified] [flag][badge] [@handle] …
+  return insertIntoChipHost(container, badge, screenName, 'badge');
 }
 
 // ============================================================================
@@ -655,8 +886,11 @@ function applyBotUI(replyElement, verdict, username) {
         container.removeEventListener('click', revealHandler);
         
         const badge = container.querySelector('[data-bot-badge]');
-        if (badge?.parentElement) {
-          badge.parentElement.insertBefore(createHideAgainButton(container), badge.nextSibling);
+        const hideBtn = createHideAgainButton(container);
+        if (badge && window.BotUI?.insertIntoChipHost) {
+          insertIntoChipHost(container, hideBtn, resolvedUsername, 'hide');
+        } else if (badge?.parentElement) {
+          badge.parentElement.insertBefore(hideBtn, badge.nextSibling);
         }
       });
     }
@@ -680,12 +914,17 @@ function removeBotUI(container) {
   container.querySelector('[data-bot-skeleton]')?.remove();
   container.querySelector('[data-bot-checked]')?.remove();
   container.querySelector('.bot-actions')?.remove();
-  
+  // Drop empty chip host only when no location flag remains
+  const host = container.querySelector('[data-xat-chip-host]');
+  if (host && !host.querySelector('[data-twitter-flag], [data-twitter-flag-shimmer]')) {
+    host.remove();
+  }
+
   container.classList.remove(
     'bot-reply-dimmed', 'bot-reply-container', 'bot-reply-slop',
     'bot-reply-flagged', 'bot-reply-flagged-medium', 'bot-reply-flagged-slop'
   );
-  
+
   container.style.removeProperty('position');
   delete container.dataset.botVerdict;
 }
@@ -884,6 +1123,11 @@ if (typeof window !== 'undefined') {
     resolvePending,
     showToast,
     testOnTweet,
+    getUserNameRoot,
+    ensureChipHost,
+    insertIntoChipHost,
+    insertBotBadge,
+    findDisplayNameLink,
     CATEGORY_LABELS,
   };
 }
