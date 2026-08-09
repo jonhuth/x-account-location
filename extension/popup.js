@@ -166,6 +166,89 @@ resetStatsBtn.addEventListener('click', () => {
 });
 
 // ============================================================================
+// Focus / declutter (Tools)
+// ============================================================================
+
+const FM = typeof window !== 'undefined' ? window.FocusMode : null;
+const focusStatus = document.getElementById('focusStatus');
+
+function setFocusStatus(text) {
+  if (focusStatus) focusStatus.textContent = text || '';
+}
+
+function setSwitchEl(el, on) {
+  if (!el) return;
+  el.setAttribute('aria-checked', on ? 'true' : 'false');
+  el.classList.toggle('on', on);
+}
+
+async function refreshFocusUI() {
+  if (!FM) return;
+  const state = await FM.loadFocusState();
+  document.querySelectorAll('[data-focus-key]').forEach((el) => {
+    const key = el.dataset.focusKey;
+    setSwitchEl(el, Boolean(state[key]));
+  });
+}
+
+function notifyFocusUpdated() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]?.id) {
+      chrome.tabs.sendMessage(tabs[0].id, { type: 'focusModeUpdated' }).catch(() => {});
+    }
+  });
+}
+
+document.querySelectorAll('[data-focus-key]').forEach((el) => {
+  el.addEventListener('click', async () => {
+    if (!FM) return;
+    const key = el.dataset.focusKey;
+    const next = el.getAttribute('aria-checked') !== 'true';
+    setSwitchEl(el, next);
+    await FM.saveFocusState({ [key]: next });
+    notifyFocusUpdated();
+    setFocusStatus(next ? `On: ${key}` : `Off: ${key}`);
+  });
+});
+
+document.getElementById('focusPresetCalm')?.addEventListener('click', async () => {
+  if (!FM) return;
+  await FM.saveFocusState({
+    hideForYouTab: true,
+    forceFollowing: true,
+    hideNewsExplore: true,
+    hideTrends: true,
+    hideWhoToFollow: true,
+    hidePromoted: true,
+    hideGrokNav: false,
+    hideCommunitiesNav: false,
+    hidePremiumUpsells: true,
+    hideTopicsSpaces: true,
+  });
+  await refreshFocusUI();
+  notifyFocusUpdated();
+  setFocusStatus('Preset: calm home (Following + less chrome)');
+});
+
+document.getElementById('focusPresetOff')?.addEventListener('click', async () => {
+  if (!FM) return;
+  const defaults = FM.DEFAULT_FOCUS();
+  await FM.saveFocusState(defaults);
+  await refreshFocusUI();
+  notifyFocusUpdated();
+  setFocusStatus('All focus toggles off');
+});
+
+if (FM) {
+  refreshFocusUI().catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[FM.FOCUS_KEY]) {
+      refreshFocusUI().catch(() => {});
+    }
+  });
+}
+
+// ============================================================================
 // Mute / Block manager (Tools)
 // ============================================================================
 

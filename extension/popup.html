@@ -711,6 +711,58 @@
   <div class="tab-panel" role="tabpanel" id="tab-tools" aria-labelledby="tab-btn-tools" hidden>
     <div class="stack">
       <section class="section">
+        <div class="section-label">Focus / declutter</div>
+        <p class="meta" style="margin-top:0">Hide noisy X chrome. All off by default — flip what you want.</p>
+        <div class="focus-toggles" id="focusToggles">
+          <div class="row">
+            <span class="row-label" id="focusForYouLabel">Hide “For you” tab</span>
+            <button type="button" class="switch" id="focusHideForYou" role="switch" aria-checked="false" aria-labelledby="focusForYouLabel" data-focus-key="hideForYouTab"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusForceLabel">Always use Following</span>
+            <button type="button" class="switch" id="focusForceFollowing" role="switch" aria-checked="false" aria-labelledby="focusForceLabel" data-focus-key="forceFollowing"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusNewsLabel">Hide News / Explore</span>
+            <button type="button" class="switch" id="focusHideNews" role="switch" aria-checked="false" aria-labelledby="focusNewsLabel" data-focus-key="hideNewsExplore"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusTrendsLabel">Hide Trends / What’s happening</span>
+            <button type="button" class="switch" id="focusHideTrends" role="switch" aria-checked="false" aria-labelledby="focusTrendsLabel" data-focus-key="hideTrends"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusWtfLabel">Hide Who to follow</span>
+            <button type="button" class="switch" id="focusHideWtf" role="switch" aria-checked="false" aria-labelledby="focusWtfLabel" data-focus-key="hideWhoToFollow"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusPromoLabel">Hide promoted posts</span>
+            <button type="button" class="switch" id="focusHidePromo" role="switch" aria-checked="false" aria-labelledby="focusPromoLabel" data-focus-key="hidePromoted"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusGrokLabel">Hide Grok nav</span>
+            <button type="button" class="switch" id="focusHideGrok" role="switch" aria-checked="false" aria-labelledby="focusGrokLabel" data-focus-key="hideGrokNav"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusCommLabel">Hide Communities nav</span>
+            <button type="button" class="switch" id="focusHideComm" role="switch" aria-checked="false" aria-labelledby="focusCommLabel" data-focus-key="hideCommunitiesNav"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusPremLabel">Hide Premium upsells</span>
+            <button type="button" class="switch" id="focusHidePrem" role="switch" aria-checked="false" aria-labelledby="focusPremLabel" data-focus-key="hidePremiumUpsells"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusTopicsLabel">Hide Topics / Spaces promos</span>
+            <button type="button" class="switch" id="focusHideTopics" role="switch" aria-checked="false" aria-labelledby="focusTopicsLabel" data-focus-key="hideTopicsSpaces"></button>
+          </div>
+        </div>
+        <div class="btn-row" style="margin-top:8px">
+          <button type="button" class="btn btn--ghost" id="focusPresetCalm">Preset: calm home</button>
+          <button type="button" class="btn btn--ghost" id="focusPresetOff">All off</button>
+        </div>
+        <p class="meta meta--center" id="focusStatus"></p>
+      </section>
+
+      <section class="section">
         <div class="section-label">Mute / block manager</div>
         <p class="meta" style="margin-top:0">Bulk words &amp; accounts. Stem expand + AI suggestions. Client hide on timeline; Apply pushes to X mute settings when that page is open.</p>
 
@@ -802,6 +854,7 @@
   <script src="countryFlags.js"></script>
   <script src="myInterests.js"></script>
   <script src="muteBlock.js"></script>
+  <script src="focusMode.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

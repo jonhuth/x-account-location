@@ -33,6 +33,8 @@ let pageScriptInjected = false;
 let muteBlockState = null;
 let muteBlockScanScheduled = false;
 
+// Focus declutter (For You / News / trends / etc.)
+
 // Processing
 const PROCESS_THROTTLE = 2000;
 const INIT_DELAY = 1500;
@@ -118,6 +120,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     setTimeout(init, 500);
   } else if (request.type === 'muteBlockUpdated') {
     loadMuteBlockState().then(() => scheduleMuteBlockScan());
+  } else if (request.type === 'focusModeUpdated') {
+    window.FocusMode?.loadFocusState?.().then(() => {
+      window.FocusMode?.applyFocusMode?.();
+    });
   }
 });
 
@@ -1393,6 +1399,11 @@ async function init() {
   await loadStats();
   await checkStorageUsage();
   await loadMuteBlockState();
+  try {
+    await window.FocusMode?.initFocusMode?.();
+  } catch {
+    /* ignore */
+  }
   
   // Mute/block hide can run even when location + bot toggles are off
   const muteActive = Boolean(muteBlockState?.settings?.hideMatchingTweets && (
@@ -1400,9 +1411,10 @@ async function init() {
     muteBlockState.muteAccounts?.length ||
     muteBlockState.blockAccounts?.length
   ));
+  const focusActive = Boolean(window.FocusMode?.anyFocusEnabled?.());
 
   // Early return only if NOTHING is enabled
-  if (!extensionEnabled && !botDetectionEnabled && !muteActive) return;
+  if (!extensionEnabled && !botDetectionEnabled && !muteActive && !focusActive) return;
   
   // pageScript: passive user intercept + following list + location
   // Needed for bot legitimacy even when location flags are off
