@@ -79,15 +79,33 @@ function validateCategory(cat: unknown): SpamCategory {
 	return "crypto_spam";
 }
 
+/** Min confidence to accept AI is_bot — weak bot calls become human/slop (cut FPs). */
+const AI_BOT_MIN_CONF = 0.8;
+
 function toVerdict(parsed: AIResponse): BotVerdict {
-	const isBot = parsed.is_bot;
-	const isSlop = parsed.is_slop !== undefined ? Boolean(parsed.is_slop) : isBot;
+	let isBot = Boolean(parsed.is_bot);
+	let isSlop = parsed.is_slop !== undefined ? Boolean(parsed.is_slop) : isBot;
+	let confidence = Math.min(1, Math.max(0, Number(parsed.confidence) || 0.5));
+	let category = parsed.category;
+	let reason = parsed.reason;
+
+	// Soft AI bot flags are a major FP source — demote to slop or genuine
+	if (isBot && confidence < AI_BOT_MIN_CONF) {
+		isBot = false;
+		isSlop = isSlop || confidence >= 0.55;
+		category = isSlop ? "llm_slop" : "genuine";
+		reason = isSlop
+			? `${reason} (downgraded: weak bot confidence)`
+			: `${reason} (downgraded to human: weak bot confidence)`;
+		confidence = isSlop ? Math.max(confidence, 0.6) : Math.max(1 - confidence, 0.7);
+	}
+
 	return {
 		isBot,
 		isSlop: isBot ? true : isSlop,
-		confidence: parsed.confidence,
-		category: parsed.category,
-		reason: parsed.reason,
+		confidence,
+		category,
+		reason,
 		signals: parsed.signals,
 		source: "ai",
 	};

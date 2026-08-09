@@ -79,8 +79,19 @@ async function loadBotCache() {
 					botVerdictCache.set(username.toLowerCase(), data);
 					continue;
 				}
+				// Drop legacy over-aggressive bot FPs (old local "true"/"gm" = bot)
+				const cleaned = sanitizeIncomingVerdict(data);
+				if (
+					data.isBot &&
+					(!cleaned?.isBot ||
+						data.source === "local" && Number(data.confidence) < 0.85)
+				) {
+					// Re-eval next sighting under human-default rules
+					purged = true;
+					continue;
+				}
 				if (data.expiry && data.expiry > now) {
-					botVerdictCache.set(username.toLowerCase(), data);
+					botVerdictCache.set(username.toLowerCase(), cleaned || data);
 				} else {
 					purged = true; // expired stranger score
 				}
@@ -280,36 +291,38 @@ function stabilizeAccountVerdict(username, seed) {
 	}
 
 	const avg = clamp01(Number(score.avgBotConf) || replyScore);
-	// Class from aggregate (majority + bot-likeness), not the latest reply alone
-	let isBot =
-		Boolean(score.isBot) ||
-		(score.botHits >= 1 && avg >= 0.62) ||
-		(score.botHits > score.genuineHits && score.botHits >= 1);
+	const seedConf = Number(seed.confidence) || 0;
+	const seedStrongBot = Boolean(seed.isBot) && seedConf >= 0.8;
+
+	// HUMAN-DEFAULT account class — one weak hit must not brand someone a bot
+	let isBot = false;
+	if (samples === 1) {
+		isBot = seedStrongBot;
+	} else {
+		isBot =
+			Boolean(score.isBot) ||
+			(score.botHits >= 2 && avg >= 0.75) ||
+			(score.botHits >= 3 && score.botHits > score.genuineHits);
+	}
+
 	let isSlop =
 		!isBot &&
 		(Boolean(score.isSlop) ||
-			(score.slopHits >= 1 && avg >= 0.35 && avg < 0.62));
+			(score.slopHits >= 2 && avg >= 0.4) ||
+			(Boolean(seed.isSlop) && !seed.isBot && seedConf >= 0.7 && samples === 1));
 
-	// Soften: one weak local hit should not flip a multi-sample human
-	if (
-		isBot &&
-		score.genuineHits >= 2 &&
-		score.botHits === 1 &&
-		avg < 0.7 &&
-		!seed.isBot
-	) {
+	// Never let a single local/AI FP stick if we later see genuine posts
+	if (isBot && score.genuineHits >= score.botHits && score.genuineHits >= 1 && avg < 0.8) {
 		isBot = false;
 	}
 
 	let confidence;
 	if (isBot) {
-		// Account bot score — EMA of bot-likeness
-		confidence = clamp01(avg, 0.65, 0.99);
+		confidence = clamp01(Math.max(avg, seedStrongBot ? seedConf : 0), 0.8, 0.99);
 	} else if (isSlop) {
-		confidence = clamp01(0.6 + avg * 0.3, 0.6, 0.92);
+		confidence = clamp01(0.65 + avg * 0.25, 0.65, 0.9);
 	} else {
-		// Account human score — inverse of bot-likeness (don't floor so low it looks "unsure")
-		confidence = clamp01(1 - avg, 0.7, 0.99);
+		confidence = clamp01(1 - avg * 0.5, 0.75, 0.99);
 	}
 
 	const category = isBot
@@ -380,8 +393,9 @@ function saveBotCache(username, verdict) {
 	const key = String(username || "").toLowerCase();
 	const now = Date.now();
 
-	// Never cache failed/zero-score placeholders — they poisoned the UI as green ✓0
-	if (isUnknownVerdict(verdict)) return null;
+	// Sanitize weak bot FPs before any persistence
+	verdict = sanitizeIncomingVerdict(verdict);
+	if (!verdict || isUnknownVerdict(verdict)) return null;
 
 	// Never let short-reply / bot verdicts overwrite mutual or following hard-trust
 	const existing = botVerdictCache.get(key);
@@ -498,20 +512,46 @@ function syncAccountUI(username) {
 	}
 }
 
+/** Min conf to keep isBot on the client (matches AI gate). */
+const BOT_MIN_CONF = 0.8;
+
+/**
+ * Coerce weak bot labels → human/slop. Cuts the main false-positive path.
+ */
+function sanitizeIncomingVerdict(verdict) {
+	if (!verdict || isUnknownVerdict(verdict)) return verdict;
+	if (isHardPinnedVerdict(verdict)) return verdict;
+	const conf = Math.min(1, Math.max(0, Number(verdict.confidence) || 0));
+	if (verdict.isBot && conf < BOT_MIN_CONF) {
+		const keepSlop = Boolean(verdict.isSlop) || conf >= 0.55;
+		return {
+			...verdict,
+			isBot: false,
+			isSlop: keepSlop,
+			confidence: keepSlop ? Math.max(conf, 0.6) : Math.max(1 - conf, 0.75),
+			category: keepSlop ? verdict.category || "llm_slop" : "genuine",
+			reason: keepSlop
+				? `${verdict.reason || "Weak bot signal"} (shown as slop, not bot)`
+				: `${verdict.reason || "Weak bot signal"} (treated as human)`,
+		};
+	}
+	return verdict;
+}
+
 function normalizeVerdict(verdict) {
+	const v = sanitizeIncomingVerdict(verdict) || verdict || {};
 	return {
-		isBot: Boolean(verdict.isBot),
-		isSlop: Boolean(verdict.isSlop),
-		confidence: Math.min(1, Math.max(0, Number(verdict.confidence) || 0)),
-		category: verdict.category || "genuine",
-		reason: String(verdict.reason || ""),
-		signals: Array.isArray(verdict.signals) ? verdict.signals.slice(0, 8) : [],
-		source: verdict.source || "ai",
-		trustTier: verdict.trustTier || "none",
-		pinned: Boolean(verdict.pinned) || isHardPinnedVerdict(verdict) || undefined,
-		accountScore:
-			verdict.accountScore != null ? Number(verdict.accountScore) : null,
-		replyScore: verdict.replyScore != null ? Number(verdict.replyScore) : null,
+		isBot: Boolean(v.isBot),
+		isSlop: Boolean(v.isSlop),
+		confidence: Math.min(1, Math.max(0, Number(v.confidence) || 0)),
+		category: v.category || "genuine",
+		reason: String(v.reason || ""),
+		signals: Array.isArray(v.signals) ? v.signals.slice(0, 8) : [],
+		source: v.source || "ai",
+		trustTier: v.trustTier || "none",
+		pinned: Boolean(v.pinned) || isHardPinnedVerdict(v) || undefined,
+		accountScore: v.accountScore != null ? Number(v.accountScore) : null,
+		replyScore: v.replyScore != null ? Number(v.replyScore) : null,
 	};
 }
 
@@ -570,23 +610,30 @@ function updateAccountScore(username, verdict) {
 		updatedAt: 0,
 	};
 
+	// Only strong bot calls count as botHits (avoid one weak FP poisoning the account)
 	const conf = Number(verdict.confidence) || 0;
+	const strongBot = Boolean(verdict.isBot) && conf >= 0.8;
 	const samples = prev.samples + 1;
-	const botHits = prev.botHits + (verdict.isBot ? 1 : 0);
+	const botHits = prev.botHits + (strongBot ? 1 : 0);
 	const genuineHits =
 		prev.genuineHits + (!verdict.isBot && !verdict.isSlop ? 1 : 0);
 	const slopHits = prev.slopHits + (verdict.isSlop && !verdict.isBot ? 1 : 0);
-	// Rolling bot-likeness across posts (not raw reply confidence)
-	const botness = replyBotness(verdict);
+	const botness = replyBotness({
+		...verdict,
+		// Weak bot labels contribute as mild slop-ish, not full bot
+		isBot: strongBot,
+		confidence: strongBot ? conf : conf,
+	});
 	const avgBotConf =
 		(prev.avgBotConf * prev.samples + botness) / samples;
 
+	// Account is bot only with repeated strong hits
 	const isBot =
-		(botHits > genuineHits && botHits >= 2) ||
-		(botHits >= 2 && avgBotConf >= 0.65);
+		(botHits >= 2 && avgBotConf >= 0.75) ||
+		(botHits >= 3 && botHits > genuineHits);
 	const isSlop =
 		!isBot &&
-		(slopHits >= 2 || (verdict.isSlop && conf >= 0.8 && slopHits >= 1));
+		(slopHits >= 2 || (verdict.isSlop && conf >= 0.75 && slopHits >= 1));
 
 	accountScores.set(key, {
 		botHits,
@@ -594,7 +641,7 @@ function updateAccountScore(username, verdict) {
 		slopHits,
 		samples,
 		avgBotConf,
-		lastCategory: verdict.isBot
+		lastCategory: strongBot
 			? verdict.category || prev.lastCategory
 			: prev.lastCategory || verdict.category || "genuine",
 		isBot,
@@ -633,18 +680,19 @@ function getAccountPriorVerdict(username) {
 	// Strong human prior: low bot-likeness across samples
 	if (avg < ACCOUNT_PRIOR_CONF && !score.isBot) {
 		if (score.genuineHits >= ACCOUNT_PRIOR_MIN_SAMPLES && !score.isBot) {
-			// Human confidence = inverse of bot-likeness (was inverted — looked "unsure")
-			const humanConf = clamp01(1 - avg, 0.75, 0.99);
+			const humanConf = clamp01(1 - avg * 0.5, 0.8, 0.99);
 			return {
 				isBot: false,
-				isSlop: Boolean(score.isSlop),
-				confidence: score.isSlop
-					? clamp01(0.65 + avg * 0.2, 0.65, 0.9)
+				isSlop: Boolean(score.isSlop) && score.slopHits >= 2,
+				confidence: score.isSlop && score.slopHits >= 2
+					? clamp01(0.65 + avg * 0.2, 0.65, 0.88)
 					: humanConf,
-				category: score.isSlop ? "llm_slop" : "genuine",
-				reason: score.isSlop
-					? "Account often posts slop (account prior)"
-					: "Consistent human across prior posts",
+				category:
+					score.isSlop && score.slopHits >= 2 ? "llm_slop" : "genuine",
+				reason:
+					score.isSlop && score.slopHits >= 2
+						? "Account often posts low-info replies (not labeled bot)"
+						: "Consistent human across prior posts",
 				signals: ["account_prior_human"],
 				source: "account_prior",
 				accountScore: avg,
@@ -653,13 +701,14 @@ function getAccountPriorVerdict(username) {
 		}
 		return null;
 	}
-	if (score.isBot && score.botHits >= ACCOUNT_PRIOR_MIN_SAMPLES) {
+	// Bot prior: need repeated strong hits
+	if (score.isBot && score.botHits >= 2 && avg >= 0.75) {
 		return {
 			isBot: true,
 			isSlop: Boolean(score.isSlop),
-			confidence: clamp01(avg, 0.7, 0.99),
+			confidence: clamp01(avg, 0.8, 0.99),
 			category: score.lastCategory || "crypto_spam",
-			reason: "Repeated bot pattern on this account",
+			reason: "Repeated strong bot pattern on this account",
 			signals: ["account_prior_bot"],
 			source: "account_prior",
 			accountScore: avg,
