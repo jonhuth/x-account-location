@@ -186,24 +186,7 @@ const BOT_UI_STYLES = `
   color: inherit;
 }
 
-/* Dim / accent — no layout reflow */
-.bot-reply-dimmed {
-  opacity: 0.32 !important;
-  transition: opacity 0.18s ease;
-}
-.bot-reply-dimmed:hover,
-.bot-reply-dimmed:focus-within { opacity: 0.72 !important; }
-
-.bot-reply-slop {
-  opacity: 0.55 !important;
-  transition: opacity 0.18s ease;
-}
-.bot-reply-slop:hover,
-.bot-reply-slop:focus-within { opacity: 0.88 !important; }
-
-.bot-reply-flagged { box-shadow: inset 3px 0 0 var(--xat-danger) !important; }
-.bot-reply-flagged-medium { box-shadow: inset 3px 0 0 var(--xat-warn) !important; }
-.bot-reply-flagged-slop { box-shadow: inset 3px 0 0 var(--xat-slop-bar) !important; }
+/* Posts stay full opacity — rating chip + optional actions only (no dim/cover) */
 
 /* Quick actions — desktop hover + badge click (toggle) on touch */
 .bot-actions {
@@ -559,24 +542,6 @@ function createCheckedDot() {
   dot.setAttribute('data-bot-checked', 'true');
   dot.title = 'Verified human';
   return dot;
-}
-
-function createHideAgainButton(container) {
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'bot-hide-btn';
-  btn.setAttribute('data-bot-hide-btn', 'true');
-  btn.textContent = 'Hide';
-  btn.title = 'Re-hide this reply';
-
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-    container.classList.add('bot-reply-dimmed');
-    btn.remove();
-  });
-
-  return btn;
 }
 
 // ============================================================================
@@ -939,50 +904,8 @@ function applyBotUI(replyElement, verdict, username) {
     });
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
-  
-  // Dim / flag bots (account-level class)
-  if (displayVerdict.isBot === true) {
-    const severity = getSeverityLevel(confidence);
-    
-    if (severity === 'high') {
-      container.classList.add('bot-reply-flagged');
-    } else if (severity === 'medium') {
-      container.classList.add('bot-reply-flagged-medium');
-    }
-    
-    // Dim high-confidence bots (sensitivity can raise/lower later via dataset)
-    const dimThreshold = Number(container.dataset.botDimThreshold) || 0.7;
-    if (confidence >= dimThreshold) {
-      container.classList.add('bot-reply-dimmed');
-      addQuickActions(container, resolvedUsername);
-      
-      container.addEventListener('click', function revealHandler(e) {
-        if (e.target.closest('.bot-action-btn') || e.target.closest('[data-bot-badge]')) return;
-        
-        container.classList.remove('bot-reply-dimmed');
-        container.removeEventListener('click', revealHandler);
-        
-        const badge = container.querySelector('[data-bot-badge]');
-        const hideBtn = createHideAgainButton(container);
-        if (badge && window.BotUI?.insertIntoChipHost) {
-          insertIntoChipHost(container, hideBtn, resolvedUsername, 'hide');
-        } else if (badge?.parentElement) {
-          badge.parentElement.insertBefore(hideBtn, badge.nextSibling);
-        }
-      });
-    }
-  } else if (displayVerdict.isSlop === true && confidence >= 0.65) {
-    // Lighter treatment for slop-only (not hard bot)
-    container.classList.add('bot-reply-flagged-slop');
-    container.classList.add('bot-reply-slop');
-    addQuickActions(container, resolvedUsername);
-    
-    container.addEventListener('click', function revealHandler(e) {
-      if (e.target.closest('.bot-action-btn') || e.target.closest('[data-bot-badge]')) return;
-      container.classList.remove('bot-reply-slop');
-      container.removeEventListener('click', revealHandler);
-    });
-  }
+
+  // Score chip + badge-click actions only — never dim/cover the post
 }
 
 function removeBotUI(container) {
@@ -1001,6 +924,7 @@ function removeBotUI(container) {
     'bot-reply-dimmed', 'bot-reply-container', 'bot-reply-slop',
     'bot-reply-flagged', 'bot-reply-flagged-medium', 'bot-reply-flagged-slop'
   );
+  // Legacy class cleanup if older builds left opacity styles on the article
 
   container.style.removeProperty('position');
   delete container.dataset.botVerdict;
@@ -1250,6 +1174,7 @@ function removeAllBotUI() {
   document.querySelectorAll('[data-bot-badge], [data-bot-hide-btn], [data-bot-skeleton], [data-bot-checked], .bot-actions').forEach(el => el.remove());
   document.querySelectorAll('.bot-reply-dimmed, .bot-reply-slop, .bot-reply-container, .bot-reply-flagged, .bot-reply-flagged-medium, .bot-reply-flagged-slop').forEach(el => {
     el.classList.remove('bot-reply-dimmed', 'bot-reply-slop', 'bot-reply-container', 'bot-reply-flagged', 'bot-reply-flagged-medium', 'bot-reply-flagged-slop');
+    el.style.removeProperty('opacity');
   });
   document.querySelectorAll('[data-bot-verdict]').forEach(el => {
     delete el.dataset.botVerdict;
