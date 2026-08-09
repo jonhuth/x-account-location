@@ -70,14 +70,22 @@ macOS desktop:
 # Prefer: open the built .app from DerivedData/…/Debug/
 ```
 
-JS-only iteration after project exists:
+JS-only iteration after project exists (typical day-to-day):
 
 ```bash
+# After editing extension/*.js only — skip convert, rebuild, reinstall sim
+git pull   # or rsync/scp your branch onto the Mac
 SKIP_CONVERT=1 ./safari/build.sh ios-sim
 SKIP_CONVERT=1 ./safari/run-sim.sh
+# Then in Simulator Safari: hard-refresh x.com (or kill Safari + reopen)
 ```
 
-Re-run **convert** when `manifest.json` or file set changes.
+**Do you re-enable the extension every rebuild?** Usually **no** if the bundle id stays the same. Re-enable only after:
+- first install on that sim/device
+- full uninstall of the containing app
+- re-convert that changes extension bundle id / app identity
+
+Re-run **convert** when `manifest.json` or the file set in the extension changes.
 
 ## Signing without babysitting Xcode every time
 

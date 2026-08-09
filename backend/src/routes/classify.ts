@@ -33,9 +33,9 @@ app.post("/", async (c) => {
 				continue;
 			}
 
-			// 2) LRU cache (shared, non-personalized)
+			// 2) LRU cache (shared, non-personalized) — skip unusable placeholders
 			const cached = getCachedVerdict(cacheKey(reply));
-			if (cached) {
+			if (cached && cached.source !== "fallback" && Number(cached.confidence) > 0) {
 				results.push({ index: i, verdict: cached });
 				continue;
 			}
@@ -49,7 +49,8 @@ app.post("/", async (c) => {
 
 			needAi.forEach((item, i) => {
 				const verdict = aiVerdicts[i];
-				if (verdict) {
+				// Never put fallback zeros into the shared LRU
+				if (verdict && Number(verdict.confidence) > 0) {
 					setCachedVerdict(cacheKey(item.reply), verdict);
 				}
 				results.push({
@@ -103,14 +104,15 @@ function normalizeReply(r: Partial<ReplyData>): ReplyData {
 }
 
 function createFallbackVerdict(): BotVerdict {
+	// Must NOT look like a real human score of 0 — clients treat source=fallback as unknown
 	return {
 		isBot: false,
 		isSlop: false,
 		confidence: 0,
 		category: "genuine",
-		reason: "Classification failed, defaulting to genuine",
+		reason: "Classification failed — score unavailable",
 		signals: [],
-		source: "ai",
+		source: "fallback",
 	};
 }
 

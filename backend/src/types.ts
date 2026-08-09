@@ -34,7 +34,7 @@ export interface BotVerdict {
 	category: SpamCategory;
 	reason: string;
 	signals: string[];
-	source: "ai" | "cache" | "local";
+	source: "ai" | "cache" | "local" | "fallback";
 }
 
 export interface ClassifyRequest {

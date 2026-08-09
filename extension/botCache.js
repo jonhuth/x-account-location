@@ -65,10 +65,20 @@ async function loadBotCache() {
 		const now = Date.now();
 
 		if (result[BOT_CACHE_KEY]) {
+			let purged = false;
 			for (const [username, data] of Object.entries(result[BOT_CACHE_KEY])) {
-				if (data?.expiry && data.expiry > now) {
+				if (data?.expiry && data.expiry > now && !isUnknownVerdict(data)) {
 					botVerdictCache.set(username.toLowerCase(), data);
+				} else if (data && isUnknownVerdict(data)) {
+					purged = true;
 				}
+			}
+			// Rewrite storage without legacy conf=0 "human" poison
+			if (purged) {
+				pendingCacheSave = setTimeout(async () => {
+					await persistBotCache();
+					pendingCacheSave = null;
+				}, 250);
 			}
 		}
 
@@ -88,10 +98,32 @@ async function loadBotCache() {
 	}
 }
 
+/** Unusable classify result — must not be persisted as a real human score of 0. */
+function isUnknownVerdict(verdict) {
+	if (!verdict) return true;
+	if (verdict.unknown === true || verdict.source === "fallback") return true;
+	if (verdict.isBot || verdict.isSlop) return false;
+	if (
+		verdict.source === "trust" ||
+		verdict.source === "override" ||
+		verdict.trustTier === "mutual" ||
+		verdict.trustTier === "following" ||
+		verdict.trustTier === "whitelist" ||
+		verdict.trustTier === "override_human"
+	) {
+		return false;
+	}
+	const conf = Number(verdict.confidence);
+	return !Number.isFinite(conf) || conf <= 0;
+}
+
 function saveBotCache(username, verdict) {
 	const key = String(username || "").toLowerCase();
 	const now = Date.now();
 	const confidence = verdict.confidence || 0;
+
+	// Never cache failed/zero-score placeholders — they poisoned the UI as green ✓0
+	if (isUnknownVerdict(verdict)) return;
 
 	// Never let short-reply / bot verdicts overwrite mutual or following hard-trust
 	const existing = botVerdictCache.get(key);
@@ -179,6 +211,11 @@ function getCachedVerdict(username) {
 	const cached = botVerdictCache.get(key);
 
 	if (cached && cached.expiry && cached.expiry > Date.now()) {
+		// Drop legacy conf=0 "human" poison that was cached before this fix
+		if (isUnknownVerdict(cached)) {
+			botVerdictCache.delete(key);
+			return null;
+		}
 		return cached;
 	}
 
@@ -656,11 +693,19 @@ async function dispatchBatch() {
 			const item = batch[i];
 			let verdict = verdicts[i];
 
-			if (verdict) {
+			if (verdict && !isUnknownVerdict(verdict)) {
 				verdict = mergeReplyAccountScores(item.username, verdict);
 				saveBotCache(item.username, verdict);
 				pendingBotRequests.delete(item.username);
 				item.resolve(verdict);
+			} else if (verdict && isUnknownVerdict(verdict)) {
+				// Server sent a zero-conf placeholder — surface as unknown, do not cache
+				const fallback = {
+					...createFallbackVerdict("server_unavailable"),
+					reason: verdict.reason || "Classification unavailable",
+				};
+				pendingBotRequests.delete(item.username);
+				item.resolve(fallback);
 			} else {
 				retryIndividual(item);
 			}
@@ -715,13 +760,15 @@ async function retryIndividual(item) {
 			sanitizeForServer(item.replyData),
 			1,
 		);
-		if (verdict) {
+		if (verdict && !isUnknownVerdict(verdict)) {
 			const merged = mergeReplyAccountScores(item.username, verdict);
 			saveBotCache(item.username, merged);
 			pendingBotRequests.delete(item.username);
 			item.resolve(merged);
 		} else {
-			const fallback = createFallbackVerdict("retry_failed");
+			const fallback = createFallbackVerdict(
+				verdict ? "server_unavailable" : "retry_failed",
+			);
 			pendingBotRequests.delete(item.username);
 			item.resolve(fallback);
 		}
@@ -741,6 +788,7 @@ function createFallbackVerdict(source) {
 		reason: `Classification unavailable (${source})`,
 		signals: [],
 		source: "fallback",
+		unknown: true,
 	};
 }
 
@@ -901,6 +949,7 @@ if (typeof window !== "undefined") {
 		getOverrideVerdict,
 		getAccountScore,
 		getAccountPriorVerdict,
+		isUnknownVerdict,
 		BACKEND_URL,
 		isCircuitOpen,
 		pendingCount: () => pendingBotRequests.size,
