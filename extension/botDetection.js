@@ -819,8 +819,9 @@ function applyThreadDuplicateToPeer(peerUsername, verdict) {
 	if (!peerUsername || !verdict || typeof document === "undefined") return;
 	const peer = String(peerUsername).toLowerCase();
 	if (isHardTrustUser(peer)) return;
+	let display = verdict;
 	try {
-		window.BotCache?.saveBotCache?.(peer, verdict);
+		display = window.BotCache?.saveBotCache?.(peer, verdict) || verdict;
 	} catch {
 		/* ignore */
 	}
@@ -828,7 +829,7 @@ function applyThreadDuplicateToPeer(peerUsername, verdict) {
 		.querySelectorAll(`article[data-testid="tweet"][data-bot-username="${peer}"]`)
 		.forEach((el) => {
 			try {
-				window.BotUI?.applyBotUI?.(el, verdict, peer);
+				window.BotUI?.applyBotUI?.(el, display, peer);
 				el.dataset.botProcessed = "bot";
 			} catch {
 				/* ignore */

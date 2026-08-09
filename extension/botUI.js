@@ -152,6 +152,15 @@ const BOT_UI_STYLES = `
   padding: 0;
   cursor: default;
 }
+/* Unknown / failed classify — not a human score of 0 */
+.bot-badge-unknown {
+  background: rgba(113, 118, 123, 0.14);
+  border-color: rgba(113, 118, 123, 0.4);
+  color: var(--xat-muted);
+  min-width: 28px !important;
+  max-width: max-content !important;
+  cursor: pointer;
+}
 
 .bot-hide-btn {
   display: inline-flex;
@@ -196,7 +205,7 @@ const BOT_UI_STYLES = `
 .bot-reply-flagged-medium { box-shadow: inset 3px 0 0 var(--xat-warn) !important; }
 .bot-reply-flagged-slop { box-shadow: inset 3px 0 0 var(--xat-slop-bar) !important; }
 
-/* Quick actions — desktop hover + always reachable via badge click path */
+/* Quick actions — desktop hover + badge click (toggle) on touch */
 .bot-actions {
   position: absolute;
   top: 8px;
@@ -218,13 +227,19 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
   pointer-events: auto;
 }
 
-/* Touch / narrow: keep actions near content, not under X chrome */
+/* Touch / narrow: always-open only when --open (no hover); keep near content */
 @media (hover: none), (max-width: 500px) {
   .bot-actions {
     top: auto;
     bottom: 8px;
     right: 12px;
     left: auto;
+  }
+  /* Without hover, never leave a half-visible bar that can't dismiss */
+  article[data-testid="tweet"]:hover > .bot-actions:not(.bot-actions--open),
+  article[data-testid="tweet"]:focus-within > .bot-actions:not(.bot-actions--open) {
+    opacity: 0;
+    pointer-events: none;
   }
 }
 
@@ -263,6 +278,17 @@ article[data-testid="tweet"]:focus-within > .bot-actions {
   background: rgba(244, 33, 46, 0.18);
   border-color: rgba(244, 33, 46, 0.55);
   color: var(--xat-danger);
+}
+.bot-action-close {
+  min-width: 28px;
+  padding: 0 8px;
+  color: var(--xat-muted);
+  font-weight: 700;
+}
+.bot-action-close:hover {
+  background: rgba(113, 118, 123, 0.22);
+  border-color: rgba(113, 118, 123, 0.5);
+  color: #e7e9ea;
 }
 
 .bot-toast {
@@ -384,26 +410,50 @@ function getSeverityLevel(confidence) {
 }
 
 /**
- * SCORING: confidence = how sure AI is about its classification
- * - isBot=true, confidence=0.95 → 95% sure it's a bot
- * - isBot=false, confidence=0.95 → 95% sure it's human
+ * SCORING (account-level):
+ * - Chip confidence is stabilized per @username across posts (not raw per-reply AI conf)
+ * - isBot=true, confidence=0.95 → 95% account bot score
+ * - isBot=false, confidence=0.95 → 95% account human score
+ * - Tooltip may still show "this post signal" separately
  *
  * DISPLAY: Compact score chip; styling lives entirely in BOT_UI_STYLES
  */
+
+/** True when classify failed / conf=0 placeholder — not a real human score. */
+function isUnknownVerdict(verdict) {
+  if (!verdict || verdict.isBot === 'pending') return false;
+  if (verdict.unknown === true || verdict.source === 'fallback') return true;
+  // Zero-confidence non-bot without trust/override = unusable (was rendering as green ✓0)
+  const conf = Number(verdict.confidence);
+  if (verdict.isBot || verdict.isSlop) return false;
+  if (
+    verdict.source === 'trust' ||
+    verdict.source === 'override' ||
+    verdict.trustTier === 'mutual' ||
+    verdict.trustTier === 'following' ||
+    verdict.trustTier === 'whitelist' ||
+    verdict.trustTier === 'override_human'
+  ) {
+    return false;
+  }
+  return !Number.isFinite(conf) || conf <= 0;
+}
 
 function buildTooltip(verdict) {
   const conf = Math.round((verdict.confidence || 0) * 100);
   const lines = [];
 
-  if (verdict.isBot) {
-    lines.push(`${conf}% bot confidence`);
+  if (isUnknownVerdict(verdict)) {
+    lines.push('Score unavailable');
+  } else if (verdict.isBot) {
+    lines.push(`${conf}% bot (account score)`);
   } else if (verdict.isSlop) {
-    lines.push(`${conf}% slop confidence (human, low-info)`);
+    lines.push(`${conf}% slop (account score)`);
   } else {
-    lines.push(`${conf}% human confidence`);
+    lines.push(`${conf}% human (account score)`);
   }
 
-  if (verdict.category && verdict.category !== 'genuine') {
+  if (verdict.category && verdict.category !== 'genuine' && !isUnknownVerdict(verdict)) {
     const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
     lines.push(`Type: ${categoryLabel}`);
   }
@@ -417,7 +467,11 @@ function buildTooltip(verdict) {
   }
 
   if (verdict.accountScore != null) {
-    lines.push(`Account prior: ${Math.round(Number(verdict.accountScore) * 100)}%`);
+    lines.push(`Bot-likeness: ${Math.round(Number(verdict.accountScore) * 100)}%`);
+  }
+
+  if (verdict.replyScore != null && verdict.source !== 'trust' && verdict.source !== 'override') {
+    lines.push(`This post signal: ${Math.round(Number(verdict.replyScore) * 100)}% bot-like`);
   }
 
   if (verdict.reason) {
@@ -428,7 +482,7 @@ function buildTooltip(verdict) {
     lines.push(verdict.signals.map((s) => `• ${s}`).join('\n'));
   }
 
-  lines.push('Click badge for feedback');
+  lines.push('Click badge to toggle feedback');
 
   return lines.join('\n');
 }
@@ -452,6 +506,11 @@ function createBotBadge(verdict, animate = true) {
     title = 'Analyzing…';
     badge.tabIndex = -1;
     badge.removeAttribute('role');
+  } else if (isUnknownVerdict(verdict)) {
+    // Never show green ✓0 — that looked like "100% human with score zero"
+    severity = 'unknown';
+    text = '?';
+    title = buildTooltip(verdict);
   } else if (
     verdict.source === 'trust' ||
     verdict.trustTier === 'following' ||
@@ -832,39 +891,56 @@ function applyBotUI(replyElement, verdict, username) {
       if (match?.[1]) resolvedUsername = match[1];
     }
   }
+
+  // Prefer account-stable cache so the same @user never shows 99 on one post and 88 on another
+  let displayVerdict = verdict;
+  if (verdict?.isBot !== 'pending' && resolvedUsername) {
+    const pinned =
+      verdict?.source === 'override' ||
+      verdict?.source === 'trust' ||
+      verdict?.trustTier === 'mutual' ||
+      verdict?.trustTier === 'following' ||
+      verdict?.trustTier === 'whitelist';
+    if (!pinned) {
+      const cached = window.BotCache?.getCachedVerdict?.(resolvedUsername);
+      if (cached && !isUnknownVerdict(cached)) {
+        displayVerdict = cached;
+      }
+    }
+  }
   
   // Skip if same verdict
   const existingVerdict = container.dataset.botVerdict;
-  if (existingVerdict === JSON.stringify(verdict)) return;
+  if (existingVerdict === JSON.stringify(displayVerdict)) return;
   
   // Remove any existing UI
   removeBotUI(container);
   
   // Store verdict
-  container.dataset.botVerdict = JSON.stringify(verdict);
+  container.dataset.botVerdict = JSON.stringify(displayVerdict);
   container.dataset.botUsername = resolvedUsername.toLowerCase();
   
-  const confidence = verdict.confidence || 0;
+  const confidence = displayVerdict.confidence || 0;
   const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   
-  // ALWAYS show a score badge (human, slop, or bot)
+  // ALWAYS show a score badge (human, slop, bot, or unknown)
   if (userNameContainer) {
-    const badge = createBotBadge(verdict, true);
-    const openActions = (e) => {
+    const badge = createBotBadge(displayVerdict, true);
+    const toggleActions = (e) => {
       e.stopPropagation();
       e.preventDefault();
-      addQuickActions(container, resolvedUsername, true);
+      // Badge click toggles the action bar open/closed (especially on touch)
+      toggleQuickActions(container, resolvedUsername);
     };
-    // Click / keyboard → feedback actions (touch path without hover)
-    badge.addEventListener('click', openActions);
+    badge.addEventListener('click', toggleActions);
     badge.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') openActions(e);
+      if (e.key === 'Enter' || e.key === ' ') toggleActions(e);
     });
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
   
-  // Dim / flag bots
-  if (verdict.isBot === true) {
+  // Dim / flag bots (account-level class)
+  if (displayVerdict.isBot === true) {
     const severity = getSeverityLevel(confidence);
     
     if (severity === 'high') {
@@ -894,7 +970,7 @@ function applyBotUI(replyElement, verdict, username) {
         }
       });
     }
-  } else if (verdict.isSlop === true && confidence >= 0.65) {
+  } else if (displayVerdict.isSlop === true && confidence >= 0.65) {
     // Lighter treatment for slop-only (not hard bot)
     container.classList.add('bot-reply-flagged-slop');
     container.classList.add('bot-reply-slop');
@@ -909,11 +985,11 @@ function applyBotUI(replyElement, verdict, username) {
 }
 
 function removeBotUI(container) {
+  hideQuickActions(container);
   container.querySelector('[data-bot-badge]')?.remove();
   container.querySelector('[data-bot-hide-btn]')?.remove();
   container.querySelector('[data-bot-skeleton]')?.remove();
   container.querySelector('[data-bot-checked]')?.remove();
-  container.querySelector('.bot-actions')?.remove();
   // Drop empty chip host only when no location flag remains
   const host = container.querySelector('[data-xat-chip-host]');
   if (host && !host.querySelector('[data-twitter-flag], [data-twitter-flag-shimmer]')) {
@@ -927,6 +1003,7 @@ function removeBotUI(container) {
 
   container.style.removeProperty('position');
   delete container.dataset.botVerdict;
+  delete container.dataset.botActionsOpen;
 }
 
 // ============================================================================
@@ -942,9 +1019,77 @@ function applyOverrideEverywhere(username, verdict, status) {
   });
 }
 
+/**
+ * Re-apply the same account verdict to every on-screen post by this user
+ * so chips never diverge (e.g. 99 on one tweet, 88 on another).
+ */
+function syncUsername(username, verdict) {
+  if (!verdict || isUnknownVerdict(verdict)) return;
+  const lower = String(username || '').toLowerCase();
+  if (!lower) return;
+  const serialized = JSON.stringify(verdict);
+
+  document.querySelectorAll(`[data-bot-username="${lower}"]`).forEach((el) => {
+    try {
+      if (el.dataset.botVerdict === serialized) return;
+    } catch { /* ignore */ }
+    // Force applyBotUI past the "same verdict" early-return
+    delete el.dataset.botVerdict;
+    applyBotUI(el, verdict, lower);
+    if (!el.dataset.botProcessed || el.dataset.botProcessed === 'pending') {
+      el.dataset.botProcessed = verdict.isBot
+        ? 'bot'
+        : verdict.isSlop
+          ? 'slop'
+          : 'human';
+    }
+  });
+}
+
+function clearActionsAutoHide(actions) {
+  const tid = Number(actions?.dataset?.hideTimer);
+  if (tid) {
+    clearTimeout(tid);
+    delete actions.dataset.hideTimer;
+  }
+}
+
+function hideQuickActions(container) {
+  if (!container) return;
+  const actions = container.querySelector('.bot-actions');
+  if (actions) {
+    clearActionsAutoHide(actions);
+    actions.remove();
+  }
+  delete container.dataset.botActionsOpen;
+}
+
+function isQuickActionsOpen(container) {
+  return Boolean(
+    container?.dataset?.botActionsOpen === '1' ||
+      container?.querySelector?.('.bot-actions.bot-actions--open')
+  );
+}
+
+/** Badge click path: open if closed, close if open. */
+function toggleQuickActions(container, username) {
+  if (isQuickActionsOpen(container)) {
+    hideQuickActions(container);
+    return;
+  }
+  addQuickActions(container, username, true);
+}
+
 function addQuickActions(container, username, forceShow = false) {
+  // forceShow=true is the explicit open path (badge tap). If already open, close.
+  if (forceShow && isQuickActionsOpen(container)) {
+    hideQuickActions(container);
+    return;
+  }
+
   container.querySelector('.bot-actions')?.remove();
-  
+  delete container.dataset.botActionsOpen;
+
   let resolvedUsername = username;
   if (!resolvedUsername) {
     const usernameLink = container.querySelector('[data-testid="UserName"] a[href^="/"], [data-testid="User-Name"] a[href^="/"]');
@@ -954,11 +1099,12 @@ function addQuickActions(container, username, forceShow = false) {
       if (match?.[1]) resolvedUsername = match[1];
     }
   }
-  
+
   if (!resolvedUsername) return;
-  
+
   const actions = document.createElement('div');
   actions.className = forceShow ? 'bot-actions bot-actions--open' : 'bot-actions';
+  if (forceShow) container.dataset.botActionsOpen = '1';
 
   const humanBtn = document.createElement('button');
   humanBtn.type = 'button';
@@ -1040,24 +1186,45 @@ function addQuickActions(container, username, forceShow = false) {
     }
   });
 
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'bot-action-btn bot-action-close';
+  closeBtn.textContent = '✕';
+  closeBtn.title = 'Hide actions';
+  closeBtn.setAttribute('aria-label', 'Hide actions');
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    hideQuickActions(container);
+  });
+
   actions.appendChild(humanBtn);
   actions.appendChild(botBtn);
   actions.appendChild(slopBtn);
   actions.appendChild(blockBtn);
+  actions.appendChild(closeBtn);
 
   if (getComputedStyle(container).position === 'static') {
     container.style.position = 'relative';
   }
   container.insertBefore(actions, container.firstChild);
 
-  // Auto-hide forced feedback bar
+  // Auto-hide forced-open bar (touch) after idle — removes bar entirely so it can reopen cleanly
   if (forceShow) {
-    setTimeout(() => {
-      if (actions.isConnected && !container.matches(':hover')) {
-        actions.style.opacity = '';
-        actions.style.pointerEvents = '';
+    const tid = setTimeout(() => {
+      if (!actions.isConnected) return;
+      // Keep open while user is actively hovering the bar/tweet (desktop)
+      if (container.matches(':hover') || actions.matches(':hover')) {
+        // Re-arm once more
+        const again = setTimeout(() => {
+          if (actions.isConnected) hideQuickActions(container);
+        }, 4000);
+        actions.dataset.hideTimer = String(again);
+        return;
       }
-    }, 4000);
+      hideQuickActions(container);
+    }, 6000);
+    actions.dataset.hideTimer = String(tid);
   }
 }
 
@@ -1123,6 +1290,11 @@ if (typeof window !== 'undefined') {
     resolvePending,
     showToast,
     testOnTweet,
+    isUnknownVerdict,
+    hideQuickActions,
+    toggleQuickActions,
+    addQuickActions,
+    syncUsername,
     getUserNameRoot,
     ensureChipHost,
     insertIntoChipHost,

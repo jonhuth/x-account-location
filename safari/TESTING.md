@@ -42,7 +42,12 @@ That generates an Xcode project under `safari/Xcode/`.
    - Safari → Settings → Advanced → **Show features for web developers**
    - Develop → [your Mac] → Web Extension Background Content / page inspect as available
    - On the x.com tab: Develop → Show Web Inspector → Console
-9. After JS-only edits inside `extension/`, you can often **Build & Run** again without re-running `convert.sh`. If Resources are out of date, re-run convert or copy updated files into the extension target’s Resources folder (converter layout).
+9. After JS-only edits inside `extension/`, rebuild without convert:
+   ```bash
+   SKIP_CONVERT=1 ./safari/build.sh ios-sim   # or macos
+   SKIP_CONVERT=1 ./safari/run-sim.sh         # iOS Simulator reinstall
+   ```
+   Then hard-refresh x.com in Safari. **Re-enable the extension only if this is a fresh install** — same bundle id rebuilds usually keep Settings → Extensions enabled.
 
 **Unsigned / developer path (macOS only):**  
 Safari → Settings → Advanced → developer menu, then Develop → **Allow Unsigned Extensions** (resets when Safari quits). Prefer the Xcode-signed path for anything you will TestFlight.

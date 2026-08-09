@@ -15,6 +15,9 @@ export function getCachedVerdict(key: string): BotVerdict | null {
 }
 
 export function setCachedVerdict(key: string, verdict: BotVerdict): void {
+	// Do not persist failed classify placeholders (conf=0 / fallback)
+	if (!verdict || verdict.source === "fallback") return;
+	if (!(Number(verdict.confidence) > 0) && !verdict.isBot && !verdict.isSlop) return;
 	cache.set(String(key || "").toLowerCase(), { ...verdict, source: "cache" });
 }
 
