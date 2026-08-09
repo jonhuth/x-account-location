@@ -24,6 +24,8 @@ const BACKEND_URL = "https://x-bot-detector-production.up.railway.app";
 // Account reputation: after N consistent hits, skip server
 const ACCOUNT_PRIOR_MIN_SAMPLES = 3;
 const ACCOUNT_PRIOR_CONF = 0.8;
+/** Min conf for isBot anywhere (local/AI/account). Below this → human/slop. */
+const BOT_MIN_CONF = 0.85;
 
 // ============================================================================
 // Cache State
@@ -254,129 +256,70 @@ function getKnownVerdict(username) {
 }
 
 /**
- * Build the single chip verdict for an account after absorbing `seed` (latest reply).
+ * Account chip from latest seed + rolling score.
+ * Simple rule: strong bot sticks only with strong conf; humans win ties.
  */
 function stabilizeAccountVerdict(username, seed) {
 	const key = String(username || "").toLowerCase();
 	const existing = botVerdictCache.get(key);
 	const score = accountScores.get(key);
+	const seedN = normalizeVerdict(seed);
+	const replyScore = replyBotness(seedN);
 
-	// Trust / user override — never average with reply noise
-	if (isHardPinnedVerdict(seed)) {
-		const conf = Math.min(1, Math.max(0, Number(seed.confidence) || 0.99));
+	if (isHardPinnedVerdict(seedN)) {
 		return {
-			...normalizeVerdict(seed),
-			confidence: conf,
-			accountScore: seed.isBot ? conf : 1 - conf,
-			replyScore: replyBotness(seed),
-		};
-	}
-	if (existing && isHardPinnedVerdict(existing) && !isHardPinnedVerdict(seed)) {
-		return {
-			...normalizeVerdict(existing),
-			replyScore: replyBotness(seed),
-		};
-	}
-
-	const replyScore = replyBotness(seed);
-	const samples = score?.samples || 0;
-
-	// First sample for this account — use this reply as the account score
-	if (!score || samples < 1) {
-		return {
-			...normalizeVerdict(seed),
-			accountScore: replyScore,
+			...seedN,
+			accountScore: seedN.isBot ? seedN.confidence : 1 - seedN.confidence,
 			replyScore,
 		};
 	}
-
-	const avg = clamp01(Number(score.avgBotConf) || replyScore);
-	const seedConf = Number(seed.confidence) || 0;
-	const seedStrongBot = Boolean(seed.isBot) && seedConf >= 0.8;
-
-	// HUMAN-DEFAULT account class — one weak hit must not brand someone a bot
-	let isBot = false;
-	if (samples === 1) {
-		isBot = seedStrongBot;
-	} else {
-		isBot =
-			Boolean(score.isBot) ||
-			(score.botHits >= 2 && avg >= 0.75) ||
-			(score.botHits >= 3 && score.botHits > score.genuineHits);
+	if (existing && isHardPinnedVerdict(existing) && !isHardPinnedVerdict(seedN)) {
+		return { ...normalizeVerdict(existing), replyScore };
 	}
 
-	let isSlop =
+	const samples = score?.samples || 0;
+	const avg = clamp01(Number(score?.avgBotConf) || replyScore);
+	const strongBot =
+		Boolean(seedN.isBot) && Number(seedN.confidence) >= BOT_MIN_CONF;
+
+	// Account bot only if this seed is strong OR we already have 2+ strong hits
+	const isBot =
+		strongBot ||
+		(Boolean(score?.isBot) && (score?.botHits || 0) >= 2 && avg >= 0.8);
+
+	// Slop is optional mild label — never upgrades to bot here
+	const isSlop =
 		!isBot &&
-		(Boolean(score.isSlop) ||
-			(score.slopHits >= 2 && avg >= 0.4) ||
-			(Boolean(seed.isSlop) && !seed.isBot && seedConf >= 0.7 && samples === 1));
-
-	// Never let a single local/AI FP stick if we later see genuine posts
-	if (isBot && score.genuineHits >= score.botHits && score.genuineHits >= 1 && avg < 0.8) {
-		isBot = false;
-	}
+		Boolean(seedN.isSlop) &&
+		Number(seedN.confidence) >= 0.7 &&
+		(samples <= 1 || (score?.slopHits || 0) >= 1);
 
 	let confidence;
 	if (isBot) {
-		confidence = clamp01(Math.max(avg, seedStrongBot ? seedConf : 0), 0.8, 0.99);
+		confidence = clamp01(
+			Math.max(avg, Number(seedN.confidence) || 0),
+			BOT_MIN_CONF,
+			0.99,
+		);
 	} else if (isSlop) {
-		confidence = clamp01(0.65 + avg * 0.25, 0.65, 0.9);
+		confidence = clamp01(Number(seedN.confidence) || 0.7, 0.65, 0.9);
 	} else {
-		confidence = clamp01(1 - avg * 0.5, 0.75, 0.99);
+		confidence = clamp01(1 - avg * 0.4, 0.8, 0.99);
 	}
-
-	const category = isBot
-		? score.lastCategory && score.lastCategory !== "genuine"
-			? score.lastCategory
-			: seed.category || "crypto_spam"
-		: isSlop
-			? "llm_slop"
-			: "genuine";
-
-	// Prefer reason/signals from a reply that matches the account class
-	const seedMatches =
-		(isBot && seed.isBot) ||
-		(isSlop && seed.isSlop && !seed.isBot) ||
-		(!isBot && !isSlop && !seed.isBot && !seed.isSlop);
-	const stripAccountSuffix = (r) =>
-		String(r || "")
-			.replace(/\s*\(account score from \d+ posts\)\s*$/i, "")
-			.trim();
-	const reason = stripAccountSuffix(
-		seedMatches
-			? seed.reason || existing?.reason || "Account-level score"
-			: existing?.reason || seed.reason || "Account-level score",
-	);
-	const rawSignals = seedMatches
-		? Array.isArray(seed.signals)
-			? seed.signals
-			: existing?.signals || []
-		: existing?.signals || seed.signals || [];
-	const signals = (Array.isArray(rawSignals) ? rawSignals : [])
-		.filter((s) => s !== "account_stable" && s !== "first_sample")
-		.slice(0, 6);
-
-	// Once we have 2+ samples, mark source so UI/tooltip shows account-level
-	const source =
-		samples >= 2
-			? "account"
-			: seed.source || existing?.source || "ai";
 
 	return normalizeVerdict({
 		isBot,
 		isSlop,
 		confidence,
-		category,
-		reason:
-			samples >= 2
-				? `${reason} (account score from ${samples} posts)`
-				: reason,
-		signals: [
-			...signals,
-			samples >= 2 ? "account_stable" : "first_sample",
-		].slice(0, 8),
-		source,
-		trustTier: seed.trustTier || existing?.trustTier || "none",
+		category: isBot
+			? seedN.category || score?.lastCategory || "airdrop_farmer"
+			: isSlop
+				? "llm_slop"
+				: "genuine",
+		reason: seedN.reason || existing?.reason || "Account score",
+		signals: Array.isArray(seedN.signals) ? seedN.signals.slice(0, 6) : [],
+		source: samples >= 2 ? "account" : seedN.source || "ai",
+		trustTier: seedN.trustTier || existing?.trustTier || "none",
 		accountScore: avg,
 		replyScore,
 	});
@@ -512,9 +455,6 @@ function syncAccountUI(username) {
 	}
 }
 
-/** Min conf to keep isBot on the client (matches AI gate). */
-const BOT_MIN_CONF = 0.8;
-
 /**
  * Coerce weak bot labels → human/slop. Cuts the main false-positive path.
  */
@@ -612,7 +552,7 @@ function updateAccountScore(username, verdict) {
 
 	// Only strong bot calls count as botHits (avoid one weak FP poisoning the account)
 	const conf = Number(verdict.confidence) || 0;
-	const strongBot = Boolean(verdict.isBot) && conf >= 0.8;
+	const strongBot = Boolean(verdict.isBot) && conf >= BOT_MIN_CONF;
 	const samples = prev.samples + 1;
 	const botHits = prev.botHits + (strongBot ? 1 : 0);
 	const genuineHits =
@@ -702,12 +642,12 @@ function getAccountPriorVerdict(username) {
 		return null;
 	}
 	// Bot prior: need repeated strong hits
-	if (score.isBot && score.botHits >= 2 && avg >= 0.75) {
+	if (score.isBot && score.botHits >= 2 && avg >= 0.8) {
 		return {
 			isBot: true,
 			isSlop: Boolean(score.isSlop),
-			confidence: clamp01(avg, 0.8, 0.99),
-			category: score.lastCategory || "crypto_spam",
+			confidence: clamp01(avg, BOT_MIN_CONF, 0.99),
+			category: score.lastCategory || "airdrop_farmer",
 			reason: "Repeated strong bot pattern on this account",
 			signals: ["account_prior_bot"],
 			source: "account_prior",

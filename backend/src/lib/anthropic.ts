@@ -79,8 +79,8 @@ function validateCategory(cat: unknown): SpamCategory {
 	return "crypto_spam";
 }
 
-/** Min confidence to accept AI is_bot — weak bot calls become human/slop (cut FPs). */
-const AI_BOT_MIN_CONF = 0.8;
+/** Min confidence to accept AI is_bot — weak bot calls become human (cut FPs). */
+const AI_BOT_MIN_CONF = 0.85;
 
 function toVerdict(parsed: AIResponse): BotVerdict {
 	let isBot = Boolean(parsed.is_bot);

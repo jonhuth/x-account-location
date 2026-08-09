@@ -158,77 +158,45 @@ function hashText(text) {
 }
 
 // ============================================================================
-// LOCAL PREFILTER — human-default, high-precision only
-// Normal short chat ("true", "gm", "exactly") is NOT a bot. is_bot needs
-// strong multi-signal evidence. Prefer missing bots over flagging humans.
+// LOCAL SCORE — simple high-signal gates only (see docs/agent/scoring.md)
+//
+// Ultimate browser-extension setup (research-backed, keep it tiny):
+//   1. Hard-trust / override (caller) — never score
+//   2. Profile metadata — hardest for farms to fake cheaply:
+//        extreme following/followers ratio, very new + mass-follow + default avatar
+//   3. Coordination — thread near-duplicate clusters (separate module)
+//   4. AI last — text-only judgments; human-default; conf ≥ 0.85 for is_bot
+//
+// Text content alone is NOT scored locally (short chat is human noise).
 // ============================================================================
-
-/** High-precision farm catchphrases (almost never genuine alone) */
-const FARM_PHRASES = new Set(
-	[
-		"few understand this",
-		"few understand",
-		"the alpha here is crazy",
-		"more people need to see this",
-		"underrated thread",
-		"this is the one",
-		"this is the way",
-		"came here to say this",
-		"taking notes",
-		"big if true",
-		"absolute fire",
-	].map((s) => s.toLowerCase()),
-);
-
-const FARM_PATTERNS = [
-	/^(few\s+understand(\s+this)?)[\s!.]*$/i,
-	/^(the\s+alpha\s+here\s+is\s+crazy)[\s!.]*$/i,
-	/^(more\s+people\s+need\s+to\s+see\s+this)[\s!.]*$/i,
-	/^(underrated\s+thread)[\s!.]*$/i,
-	/^(this\s+is\s+the\s+(way|one))[\s!.]*$/i,
-	/^(came\s+here\s+to\s+say\s+this)[\s!.]*$/i,
-];
-
-/** Clear LLM-paste openers — slop only, never is_bot by itself */
-const LLM_SLOP_PATTERNS = [
-	/^as\s+someone\s+who\b/i,
-	/^in\s+today'?s\s+(fast[- ]paced|digital|ever[- ]changing)\b/i,
-	/\bit'?s\s+not\s+just\s+about\b.*\bit'?s\s+about\b/i,
-	/\blet'?s\s+unpack\s+this\b/i,
-	/\bin\s+a\s+world\s+where\b/i,
-];
 
 function hasKnownProfileCounts(replyData) {
 	const followers = Number(replyData?.followers);
 	const following = Number(replyData?.following);
-	// Missing intercept data often arrives as 0/0 — treat as unknown, not "zero followers"
+	// 0/0 usually means "not loaded yet", not a real zero-follower farm
 	return (
 		(Number.isFinite(followers) && followers > 0) ||
 		(Number.isFinite(following) && following > 0)
 	);
 }
 
-function isProtectiveHuman(replyData) {
-	if (replyData?.isVerified) return true;
-	const followers = Number(replyData?.followers) || 0;
-	// Established audience → never local-bot from thin text alone
-	if (followers >= 2000) return true;
-	return false;
+function accountAgeDays(createdAt) {
+	if (!createdAt) return null;
+	const t = Date.parse(String(createdAt));
+	if (!Number.isFinite(t)) return null;
+	return (Date.now() - t) / (24 * 60 * 60 * 1000);
 }
 
 /**
- * Cheap local classification. Returns a verdict or null if uncertain (needs AI).
- * Never fires for mutual / following hard-trust.
- * HUMAN-DEFAULT: short agreement ≠ bot.
+ * Local classify: profile gates only. Returns null → AI or leave unknown.
+ * Never fires for hard-trust (caller + belt-and-suspenders).
  */
 function localClassify(replyData) {
 	const tier = String(replyData?.trustTier || "none");
 	if (tier === "mutual" || tier === "following" || tier === "whitelist") {
 		return null;
 	}
-	if (replyData?.userFollows === true) {
-		return null;
-	}
+	if (replyData?.userFollows === true) return null;
 	const u = String(replyData?.username || "").toLowerCase();
 	if (
 		u &&
@@ -239,124 +207,79 @@ function localClassify(replyData) {
 	) {
 		return null;
 	}
+	if (replyData?.isVerified) return null;
 
-	// Extreme follow-farm only (requires real profile counts)
-	const ratioHit = classifyFollowRatio(replyData);
+	// Gate A — extreme follow-farm ratio (classic metadata signal)
+	const ratioHit = classifyExtremeFarmProfile(replyData);
 	if (ratioHit) return ratioHit;
 
-	if (isProtectiveHuman(replyData)) {
-		return null; // let AI decide conservatively; never local-bot a verified/established acct
-	}
+	// Gate B — brand-new mass-follow shell (age + ratio + default avatar)
+	const shellHit = classifyNewShellFarm(replyData);
+	if (shellHit) return shellHit;
 
-	const text = String(replyData?.replyText || "").trim();
-	if (!text) return null;
-
-	const normalized = text
-		.toLowerCase()
-		.replace(/[“”"']/g, "")
-		.replace(/\s+/g, " ")
-		.trim();
-	const stripped = normalized.replace(/[.!?…]+$/g, "").trim();
-
-	// High-precision farm phrase — slop by default; is_bot only if stacked with farm profile
-	const farmPhrase =
-		FARM_PHRASES.has(stripped) ||
-		FARM_PHRASES.has(normalized) ||
-		FARM_PATTERNS.some((re) => re.test(text) || re.test(normalized));
-
-	if (farmPhrase) {
-		const farmProfile = isExtremeFarmProfile(replyData);
-		return makeLocalVerdict({
-			isBot: farmProfile,
-			isSlop: true,
-			confidence: farmProfile ? 0.86 : 0.7,
-			category: farmProfile ? "engagement_farmer" : "sycophant",
-			reason: farmProfile
-				? "Farm catchphrase plus extreme follow-farm profile"
-				: "Generic farm catchphrase (not enough alone to call bot)",
-			signals: farmProfile
-				? ["local_farm_phrase", "local_farm_profile"]
-				: ["local_farm_phrase"],
-		});
-	}
-
-	// LLM paste openers — slop only
-	for (const re of LLM_SLOP_PATTERNS) {
-		if (re.test(text) && text.length > 80) {
-			return makeLocalVerdict({
-				isBot: false,
-				isSlop: true,
-				confidence: 0.74,
-				category: "llm_slop",
-				reason: "Reads like generic LLM filler pasted under the post",
-				signals: ["local_llm_slop_pattern"],
-			});
-		}
-	}
-
-	// Everything else (gm, true, exactly, great post, short yes…) → human-default, use AI if needed
 	return null;
-}
-
-/** Extreme farm profile for stacking with vapid text only */
-function isExtremeFarmProfile(replyData) {
-	if (!hasKnownProfileCounts(replyData)) return false;
-	if (replyData?.isVerified) return false;
-	const followers = Math.max(0, Number(replyData?.followers) || 0);
-	const following = Math.max(0, Number(replyData?.following) || 0);
-	if (following < 2000) return false;
-	const ratio = following / Math.max(followers, 1);
-	return followers < 150 && ratio >= 25;
 }
 
 /**
- * following >> followers — ONLY extreme mass-follow with tiny audience.
- * Mild "follows a lot" is normal (journalists, founders, networkers) — do not flag.
- * Requires known non-zero counts (0/0 = missing data, not a farm).
+ * Gate A: following ≫ followers at extreme scale.
+ * Mild high-following is normal (media, founders) — not a bot.
  */
-function classifyFollowRatio(replyData) {
+function classifyExtremeFarmProfile(replyData) {
 	if (!hasKnownProfileCounts(replyData)) return null;
-	if (replyData?.isVerified) return null;
+	const followers = Math.max(0, Number(replyData?.followers) || 0);
+	const following = Math.max(0, Number(replyData?.following) || 0);
+	if (following < 2500) return null;
+	const ratio = following / Math.max(followers, 1);
+	if (!(followers < 120 && ratio >= 30)) return null;
+
+	const ratioLabel = `${Math.round(ratio)}:1`;
+	return makeLocalVerdict({
+		isBot: true,
+		isSlop: true,
+		confidence: 0.9,
+		category: "airdrop_farmer",
+		reason: `Extreme follow-farm profile: following ${following} vs ${followers} followers (${ratioLabel})`,
+		signals: [
+			"profile_ratio_extreme",
+			`following_${following}`,
+			`followers_${followers}`,
+		],
+	});
+}
+
+/**
+ * Gate B: very new account + mass following + tiny audience + default avatar.
+ * Stacked signals only — any missing field → no call.
+ */
+function classifyNewShellFarm(replyData) {
+	if (!hasKnownProfileCounts(replyData)) return null;
+	if (replyData?.hasCustomAvatar !== false) return null; // need known default avatar
+	const age = accountAgeDays(replyData?.accountCreatedAt);
+	if (age == null || age > 45) return null;
 
 	const followers = Math.max(0, Number(replyData?.followers) || 0);
 	const following = Math.max(0, Number(replyData?.following) || 0);
-	// Need a large following book + almost no audience
-	if (following < 2500) return null;
-
+	if (following < 1500 || followers >= 80) return null;
 	const ratio = following / Math.max(followers, 1);
-	const text = String(replyData?.replyText || "").trim();
-	const veryThin = text.length > 0 && text.length < 40;
-	const ratioLabel = `${Math.round(ratio)}:1`;
+	if (ratio < 20) return null;
 
-	// Classic follow-farm only
-	if (following >= 2500 && followers < 120 && ratio >= 30) {
-		return makeLocalVerdict({
-			isBot: true,
-			isSlop: true,
-			confidence: veryThin ? 0.9 : 0.84,
-			category: "airdrop_farmer",
-			reason: `Extreme follow-farm profile: following ${following} vs ${followers} followers (${ratioLabel})`,
-			signals: [
-				"local_ratio_mass_follow",
-				`following_${following}`,
-				`followers_${followers}`,
-			],
-		});
-	}
+	return makeLocalVerdict({
+		isBot: true,
+		isSlop: true,
+		confidence: 0.88,
+		category: "airdrop_farmer",
+		reason: `New shell account (~${Math.round(age)}d) mass-following with default avatar`,
+		signals: [
+			"profile_new_shell",
+			`age_days_${Math.round(age)}`,
+			`ratio_${Math.round(ratio)}`,
+		],
+	});
+}
 
-	// Slightly softer tier only with thin farm reply
-	if (following >= 3000 && followers < 200 && ratio >= 25 && veryThin) {
-		return makeLocalVerdict({
-			isBot: true,
-			isSlop: true,
-			confidence: 0.82,
-			category: "airdrop_farmer",
-			reason: `Mass following (${ratioLabel}) with empty engagement reply`,
-			signals: ["local_ratio_extreme", "local_thin_reply"],
-		});
-	}
-
-	return null;
+/** @deprecated use classifyExtremeFarmProfile — kept for imports/tests */
+function classifyFollowRatio(replyData) {
+	return classifyExtremeFarmProfile(replyData);
 }
 
 function makeLocalVerdict({
@@ -823,6 +746,8 @@ if (typeof window !== "undefined") {
 		detectYouFollowFromDom,
 		localClassify,
 		classifyFollowRatio,
+		classifyExtremeFarmProfile,
+		classifyNewShellFarm,
 		classifyThreadDuplicate,
 		applyThreadDuplicateToPeer,
 		applyThreadDuplicateToCluster,
