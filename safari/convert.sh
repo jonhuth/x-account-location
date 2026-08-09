@@ -62,15 +62,16 @@ echo "  app-name: ${APP_NAME}"
 echo "  bundle-id: ${BUNDLE_ID}"
 echo
 
+# --no-open: do not open Xcode/Cursor after convert (default handler for .xcodeproj).
 # --force overwrites a previous conversion; multiplatform (iOS + macOS) by default.
-# Drop --macos-only / --ios-only if you want a single platform.
 xcrun safari-web-extension-converter "${EXT_DIR}" \
   --project-location "${OUT_DIR}" \
   --app-name "${APP_NAME}" \
   --bundle-identifier "${BUNDLE_ID}" \
   --swift \
   --force \
-  --no-prompt
+  --no-prompt \
+  --no-open
 
 echo
 echo "Done. Hands-off next (Mac):"

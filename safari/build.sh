@@ -7,12 +7,13 @@
 #   ./safari/build.sh macos            # macOS only
 #   ./safari/build.sh convert          # convert only
 #   SKIP_CONVERT=1 ./safari/build.sh   # rebuild without re-convert
+#   SKIP_DOCTOR=1  ./safari/build.sh   # skip doctor (when already known good)
 #
 # Env:
 #   DEVELOPMENT_TEAM   Apple Team ID (required for device; recommended always)
 #   BUNDLE_ID          reverse-DNS id for convert
 #   APP_NAME           display name (default: X Account Tools)
-#   IOS_SIM_NAME       default: iPhone 16
+#   IOS_SIM_NAME       preferred sim name (optional; auto-picks if missing)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,8 +24,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-# Fail early with clear fix if CLT-only (converter lives in full Xcode)
-if [[ -x "${ROOT}/safari/doctor.sh" ]]; then
+if [[ "${SKIP_DOCTOR:-0}" != "1" && -x "${ROOT}/safari/doctor.sh" ]]; then
   if ! "${ROOT}/safari/doctor.sh" >/tmp/safari-doctor.out 2>&1; then
     cat /tmp/safari-doctor.out >&2
     exit 1
@@ -34,7 +34,7 @@ fi
 TARGET="${1:-all}"
 APP_NAME="${APP_NAME:-X Account Tools}"
 BUNDLE_ID="${BUNDLE_ID:-com.example.xaccounttools}"
-IOS_SIM_NAME="${IOS_SIM_NAME:-iPhone 16}"
+IOS_SIM_NAME="${IOS_SIM_NAME:-}"
 XCODE_DIR="${ROOT}/safari/Xcode"
 SKIP_CONVERT="${SKIP_CONVERT:-0}"
 
@@ -48,11 +48,38 @@ find_xcodeproj() {
   echo "$p"
 }
 
-find_scheme() {
+list_schemes() {
   local proj="$1"
-  # Prefer scheme matching app name; else first listed
-  local schemes
-  schemes=$(xcodebuild -list -project "$proj" 2>/dev/null | sed -n '/Schemes:/,$p' | tail -n +2 | sed 's/^[[:space:]]*//' | grep -v '^$' || true)
+  xcodebuild -list -project "$proj" 2>/dev/null \
+    | sed -n '/Schemes:/,$p' | tail -n +2 \
+    | sed 's/^[[:space:]]*//' | grep -v '^$' || true
+}
+
+# platform: ios | macos
+find_scheme() {
+  local proj="$1" platform="${2:-}"
+  local schemes scheme
+  schemes=$(list_schemes "$proj")
+  if [[ -z "$schemes" ]]; then
+    echo "error: no schemes in $proj" >&2
+    exit 1
+  fi
+
+  if [[ "$platform" == "ios" ]]; then
+    # Prefer "X Account Tools (iOS)" style schemes from the converter
+    while IFS= read -r scheme; do
+      [[ "$scheme" == *"(iOS)"* || "$scheme" == *iOS* ]] && { echo "$scheme"; return; }
+    done <<<"$schemes"
+  fi
+  if [[ "$platform" == "macos" ]]; then
+    while IFS= read -r scheme; do
+      [[ "$scheme" == *"(macOS)"* || "$scheme" == *macOS* || "$scheme" == *Mac* ]] && { echo "$scheme"; return; }
+    done <<<"$schemes"
+    # Single multiplatform scheme
+    echo "$schemes" | head -1
+    return
+  fi
+
   if echo "$schemes" | grep -qx "${APP_NAME}"; then
     echo "${APP_NAME}"
     return
@@ -60,50 +87,96 @@ find_scheme() {
   echo "$schemes" | head -1
 }
 
-run_convert() {
-  echo "==> convert"
-  APP_NAME="${APP_NAME}" BUNDLE_ID="${BUNDLE_ID}" "${ROOT}/safari/convert.sh"
+# Pick a real available iPhone simulator (name or generic platform fallback).
+resolve_ios_sim_destination() {
+  local preferred="${IOS_SIM_NAME:-}"
+  local line name
+
+  if [[ -n "$preferred" ]]; then
+    if xcrun simctl list devices available 2>/dev/null | grep -F "$preferred" | grep -q "iPhone"; then
+      echo "platform=iOS Simulator,name=${preferred}"
+      return
+    fi
+    echo "note: preferred sim '${preferred}' not available — auto-picking" >&2
+  fi
+
+  # First available iPhone from simctl
+  line=$(xcrun simctl list devices available 2>/dev/null | grep -E '^\s+iPhone' | head -1 || true)
+  if [[ -n "$line" ]]; then
+    # "    iPhone 16 Pro (UUID) (Shutdown)" or similar
+    name=$(echo "$line" | sed -E 's/^[[:space:]]+//' | sed -E 's/ \([A-F0-9-]{36}\).*//')
+    if [[ -n "$name" ]]; then
+      echo "platform=iOS Simulator,name=${name}"
+      return
+    fi
+  fi
+
+  # Generic destination — xcodebuild picks any installed iOS Simulator runtime
+  echo "generic/platform=iOS Simulator"
 }
 
-# After first successful GUI/Xcode team pick, DEVELOPMENT_TEAM can be injected:
 signing_args() {
   local args=()
   if [[ -n "${DEVELOPMENT_TEAM:-}" ]]; then
     args+=(DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}")
     args+=(-allowProvisioningUpdates)
   fi
+  # CODE_SIGN_IDENTITY for sim can stay automatic; team helps avoid empty platform issues
   printf '%s\n' "${args[@]}"
+}
+
+run_convert() {
+  echo "==> convert"
+  APP_NAME="${APP_NAME}" BUNDLE_ID="${BUNDLE_ID}" "${ROOT}/safari/convert.sh"
 }
 
 build_ios_sim() {
   local proj scheme dest
   proj=$(find_xcodeproj)
-  scheme=$(find_scheme "$proj")
-  dest="platform=iOS Simulator,name=${IOS_SIM_NAME}"
-  echo "==> xcodebuild iOS Simulator scheme=${scheme} dest=${dest}"
+  scheme=$(find_scheme "$proj" ios)
+  dest=$(resolve_ios_sim_destination)
+  echo "==> xcodebuild iOS Simulator"
+  echo "    project: $proj"
+  echo "    scheme:  $scheme"
+  echo "    dest:    $dest"
   # shellcheck disable=SC2046
-  xcodebuild \
+  if ! xcodebuild \
     -project "$proj" \
     -scheme "$scheme" \
     -destination "$dest" \
     -configuration Debug \
     $(signing_args) \
-    build
+    build; then
+    echo >&2
+    echo "error: iOS Simulator build failed." >&2
+    echo "Common fixes:" >&2
+    echo "  1. Install a simulator runtime: Xcode → Settings → Platforms → iOS" >&2
+    echo "     or: xcodebuild -downloadPlatform iOS" >&2
+    echo "  2. List sims: xcrun simctl list devices available | grep iPhone" >&2
+    echo "  3. List schemes: xcodebuild -list -project \"$proj\"" >&2
+    echo "  4. Set team: export DEVELOPMENT_TEAM=XXXXXXXXXX" >&2
+    echo "  5. Open once in Xcode to fix signing if needed:" >&2
+    echo "     open \"$proj\"" >&2
+    exit 1
+  fi
 }
 
 build_macos() {
   local proj scheme
   proj=$(find_xcodeproj)
-  scheme=$(find_scheme "$proj")
+  scheme=$(find_scheme "$proj" macos)
   echo "==> xcodebuild macOS scheme=${scheme}"
   # shellcheck disable=SC2046
-  xcodebuild \
+  if ! xcodebuild \
     -project "$proj" \
     -scheme "$scheme" \
     -destination 'platform=macOS' \
     -configuration Debug \
     $(signing_args) \
-    build
+    build; then
+    echo "error: macOS build failed. Try: open \"$(find_xcodeproj)\" and set Team on both targets." >&2
+    exit 1
+  fi
 }
 
 case "$TARGET" in
@@ -131,6 +204,5 @@ esac
 
 echo
 echo "Build finished. Next:"
-echo "  ./safari/run-sim.sh          # install+launch on iOS Simulator (still enable extension in Settings once)"
-echo "  open safari/Xcode/*.xcodeproj  # only if signing/GUI needed"
-echo "  Human: Safari → Extensions → enable + allow x.com (once per install)"
+echo "  ./safari/run-sim.sh"
+echo "  Human once: Simulator Settings → Safari → Extensions → enable + allow x.com"
