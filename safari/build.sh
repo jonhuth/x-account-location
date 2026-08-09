@@ -149,14 +149,15 @@ build_ios_sim() {
     build; then
     echo >&2
     echo "error: iOS Simulator build failed." >&2
-    echo "Common fixes:" >&2
-    echo "  1. Install a simulator runtime: Xcode → Settings → Platforms → iOS" >&2
-    echo "     or: xcodebuild -downloadPlatform iOS" >&2
-    echo "  2. List sims: xcrun simctl list devices available | grep iPhone" >&2
-    echo "  3. List schemes: xcodebuild -list -project \"$proj\"" >&2
-    echo "  4. Set team: export DEVELOPMENT_TEAM=XXXXXXXXXX" >&2
-    echo "  5. Open once in Xcode to fix signing if needed:" >&2
-    echo "     open \"$proj\"" >&2
+    echo "Your log usually means: iOS Simulator *platform/runtime* is not installed." >&2
+    echo "Fix:" >&2
+    echo "  xcodebuild -downloadPlatform iOS" >&2
+    echo "  # or: Xcode → Settings → Platforms → iOS → Get" >&2
+    echo "  # wait for download, then:" >&2
+    echo "  ./safari/doctor.sh && ./safari/build.sh ios-sim" >&2
+    echo "Meanwhile you can test on macOS Safari:" >&2
+    echo "  ./safari/build.sh macos" >&2
+    echo "  open \"$proj\"   # Run the macOS scheme, then enable extension in Safari Settings" >&2
     exit 1
   fi
 }
