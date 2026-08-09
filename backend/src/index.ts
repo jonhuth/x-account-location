@@ -4,6 +4,7 @@ import { logger } from "hono/logger";
 import { getCacheStats } from "./lib/cache.js";
 import classifyRoutes from "./routes/classify.js";
 import lookupRoutes from "./routes/lookup.js";
+import suggestMutesRoutes from "./routes/suggestMutes.js";
 
 const app = new Hono();
 
@@ -35,12 +36,14 @@ interface RateLimitRecord {
 const rateLimits = {
 	classify: new Map<string, RateLimitRecord>(),
 	lookup: new Map<string, RateLimitRecord>(),
+	suggest: new Map<string, RateLimitRecord>(),
 	global: new Map<string, RateLimitRecord>(),
 };
 
 const RATE_LIMITS = {
 	classify: { limit: 30, windowMs: 60 * 1000 }, // 30 batch requests/min
 	lookup: { limit: 20, windowMs: 60 * 1000 }, // 20 lookups/min
+	suggest: { limit: 20, windowMs: 60 * 1000 }, // 20 suggest-mutes/min
 	global: { limit: 100, windowMs: 60 * 1000 }, // 100 total/min
 };
 
@@ -116,9 +119,22 @@ app.use("/api/lookup/*", async (c, next) => {
 	await next();
 });
 
+app.use("/api/suggest-mutes", async (c, next) => {
+	if (c.req.method !== "POST") return await next();
+	const ip = getClientIP(c);
+	const { limit, windowMs } = RATE_LIMITS.suggest;
+	const { allowed, remaining } = checkRateLimit(rateLimits.suggest, ip, limit, windowMs);
+	c.header("X-RateLimit-Suggest-Remaining", String(remaining));
+	if (!allowed) {
+		return c.json({ error: "Suggest rate limit exceeded", retryAfter: Math.ceil(windowMs / 1000) }, 429);
+	}
+	await next();
+});
+
 // Routes
 app.route("/api/classify", classifyRoutes);
 app.route("/api/lookup", lookupRoutes);
+app.route("/api/suggest-mutes", suggestMutesRoutes);
 
 // Health check
 app.get("/api/health", (c) => {
@@ -138,11 +154,13 @@ app.get("/", (c) => {
 		endpoints: {
 			classify: "POST /api/classify",
 			lookup: "GET /api/lookup/:username",
+			suggestMutes: "POST /api/suggest-mutes",
 			health: "GET /api/health",
 		},
 		rateLimits: {
 			classify: "30/min per IP",
 			lookup: "20/min per IP",
+			suggestMutes: "20/min per IP",
 			global: "100/min per IP",
 		},
 	});

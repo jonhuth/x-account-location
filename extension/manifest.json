@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "X Account Tools",
-  "version": "2.3.0",
-  "description": "Location flags, bot detection, and tools for X/Twitter — Chrome + Safari (iOS/macOS)",
+  "version": "2.4.0",
+  "description": "Location flags, bot detection, mute/block tools for X/Twitter — Chrome + Safari (iOS/macOS)",
   "permissions": [
     "activeTab",
     "storage",
@@ -42,6 +42,7 @@
         "botLegitimacy.js",
         "botCache.js",
         "botUI.js",
+        "muteBlock.js",
         "content.js"
       ],
       "run_at": "document_idle"
