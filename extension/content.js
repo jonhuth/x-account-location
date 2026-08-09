@@ -29,6 +29,10 @@ let botDetectionEnabled = true;
 let botSensitivity = 3;
 let pageScriptInjected = false;
 
+// Mute/block client-side hide (lists from popup Tools manager)
+let muteBlockState = null;
+let muteBlockScanScheduled = false;
+
 // Processing
 const PROCESS_THROTTLE = 2000;
 const INIT_DELAY = 1500;
@@ -107,11 +111,75 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     botDetectionEnabled = true;
     botSensitivity = 3;
     extensionEnabled = true;
+    muteBlockState = null;
     removeAllFlags();
     window.BotUI?.removeAllBotUI?.();
+    clearMuteBlockHides();
     setTimeout(init, 500);
+  } else if (request.type === 'muteBlockUpdated') {
+    loadMuteBlockState().then(() => scheduleMuteBlockScan());
   }
 });
+
+// ============================================================================
+// MUTE / BLOCK — client-side hide from popup lists
+// ============================================================================
+
+async function loadMuteBlockState() {
+  try {
+    if (window.MuteBlock?.loadMuteBlockState) {
+      muteBlockState = await window.MuteBlock.loadMuteBlockState();
+    } else {
+      const r = await chrome.storage.local.get('mute_block_lists');
+      muteBlockState = r.mute_block_lists || null;
+    }
+  } catch {
+    muteBlockState = null;
+  }
+  return muteBlockState;
+}
+
+function clearMuteBlockHides() {
+  document.querySelectorAll('article[data-testid="tweet"][data-xat-muted]').forEach((el) => {
+    el.removeAttribute('data-xat-muted');
+    el.style.removeProperty('display');
+  });
+}
+
+function applyMuteBlockToTweet(el) {
+  if (!el || !muteBlockState?.settings?.hideMatchingTweets) {
+    if (el?.hasAttribute?.('data-xat-muted')) {
+      el.removeAttribute('data-xat-muted');
+      el.style.removeProperty('display');
+    }
+    return;
+  }
+  const match = window.MuteBlock?.tweetMatchesMute
+    ? window.MuteBlock.tweetMatchesMute(el, muteBlockState)
+    : false;
+  if (match) {
+    el.setAttribute('data-xat-muted', '1');
+    el.style.display = 'none';
+  } else if (el.hasAttribute('data-xat-muted')) {
+    el.removeAttribute('data-xat-muted');
+    el.style.removeProperty('display');
+  }
+}
+
+function scheduleMuteBlockScan() {
+  if (muteBlockScanScheduled) return;
+  muteBlockScanScheduled = true;
+  requestAnimationFrame(() => {
+    muteBlockScanScheduled = false;
+    if (!muteBlockState?.settings?.hideMatchingTweets) {
+      clearMuteBlockHides();
+      return;
+    }
+    document.querySelectorAll('article[data-testid="tweet"]').forEach((el) => {
+      applyMuteBlockToTweet(el);
+    });
+  });
+}
 
 // ============================================================================
 // LOCATION DETECTION (unchanged from original)
@@ -820,6 +888,7 @@ function setupObservers() {
           mutationTimeout = null;
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
+          scheduleMuteBlockScan();
         }, 150); // Faster mutation response
       }
     }
@@ -837,12 +906,14 @@ function setupObservers() {
           scrollPending = false;
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
+          scheduleMuteBlockScan();
         }, { timeout: 200 });
       } else {
         setTimeout(() => {
           scrollPending = false;
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
+          scheduleMuteBlockScan();
         }, 150);
       }
     }
@@ -858,6 +929,7 @@ function setupObservers() {
       setTimeout(() => {
         if (extensionEnabled) processUsernamesThrottled();
         if (botDetectionEnabled) scheduleBotProcessing();
+        scheduleMuteBlockScan();
       }, INIT_DELAY);
     }
   }, 500);
@@ -1320,9 +1392,17 @@ async function init() {
   await loadCache();
   await loadStats();
   await checkStorageUsage();
+  await loadMuteBlockState();
   
-  // Early return only if BOTH features are disabled
-  if (!extensionEnabled && !botDetectionEnabled) return;
+  // Mute/block hide can run even when location + bot toggles are off
+  const muteActive = Boolean(muteBlockState?.settings?.hideMatchingTweets && (
+    muteBlockState.muteWords?.length ||
+    muteBlockState.muteAccounts?.length ||
+    muteBlockState.blockAccounts?.length
+  ));
+
+  // Early return only if NOTHING is enabled
+  if (!extensionEnabled && !botDetectionEnabled && !muteActive) return;
   
   // pageScript: passive user intercept + following list + location
   // Needed for bot legitimacy even when location flags are off
@@ -1390,6 +1470,7 @@ async function init() {
   setTimeout(() => {
     if (extensionEnabled) processUsernamesThrottled();
     if (botDetectionEnabled) scheduleBotProcessing();
+    scheduleMuteBlockScan();
   }, INIT_DELAY);
   
   // Location cache periodic save

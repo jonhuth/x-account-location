@@ -165,6 +165,285 @@ resetStatsBtn.addEventListener('click', () => {
   }
 });
 
+// ============================================================================
+// Mute / Block manager (Tools)
+// ============================================================================
+
+const MB = typeof window !== 'undefined' ? window.MuteBlock : null;
+let mbState = null;
+let mbPendingSuggestions = [];
+
+const mbStatus = document.getElementById('mbStatus');
+const mbHideSwitch = document.getElementById('mbHideSwitch');
+
+function setMbStatus(text, kind = '') {
+  if (!mbStatus) return;
+  mbStatus.textContent = text || '';
+  mbStatus.className = 'meta meta--center' + (kind === 'ok' ? ' meta--success' : kind === 'err' ? ' meta--danger' : '');
+}
+
+function renderChipList(container, items, { labelKey, prefix = '' }) {
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = '<p class="empty">Empty</p>';
+    return;
+  }
+  container.innerHTML = items
+    .map((item) => {
+      const label = prefix + (item[labelKey] || '');
+      const src = item.source || 'manual';
+      return `<label class="chip-row">
+        <input type="checkbox" data-id="${item.id}" />
+        <span class="chip-term" title="${label}">${label}</span>
+        <span class="chip-src">${src}</span>
+      </label>`;
+    })
+    .join('');
+}
+
+function selectedIds(container) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(
+    (el) => el.dataset.id,
+  );
+}
+
+async function refreshMuteBlockUI() {
+  if (!MB) return;
+  mbState = await MB.loadMuteBlockState();
+  renderChipList(document.getElementById('mbWordsList'), mbState.muteWords, {
+    labelKey: 'term',
+  });
+  renderChipList(document.getElementById('mbMuteAccList'), mbState.muteAccounts, {
+    labelKey: 'username',
+    prefix: '@',
+  });
+  renderChipList(document.getElementById('mbBlockAccList'), mbState.blockAccounts, {
+    labelKey: 'username',
+    prefix: '@',
+  });
+  if (mbHideSwitch) {
+    const on = mbState.settings?.hideMatchingTweets !== false;
+    mbHideSwitch.classList.toggle('on', on);
+    mbHideSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
+  }
+}
+
+// Subtabs
+document.querySelectorAll('.subtab[data-mb]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.mb;
+    document.querySelectorAll('.subtab[data-mb]').forEach((b) => {
+      b.setAttribute('aria-selected', b === btn ? 'true' : 'false');
+    });
+    document.querySelectorAll('.mb-panel').forEach((p) => {
+      p.classList.toggle('active', p.id === `mb-panel-${id}`);
+    });
+  });
+});
+
+document.getElementById('mbAddWordsBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ta = document.getElementById('mbBulkWords');
+  const { words, accounts } = MB.parseBulkInput(ta?.value || '', { prefer: 'words' });
+  const w = await MB.addMuteWords(words, 'manual');
+  let a = { added: 0 };
+  if (accounts.length) a = await MB.addMuteAccounts(accounts, 'manual');
+  if (ta) ta.value = '';
+  await refreshMuteBlockUI();
+  setMbStatus(`Added ${w.added} word(s)${a.added ? `, ${a.added} account(s)` : ''}`, 'ok');
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbStemBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ids = selectedIds(document.getElementById('mbWordsList'));
+  const { added } = await MB.expandStems(ids.length ? ids : null);
+  await refreshMuteBlockUI();
+  setMbStatus(
+    added
+      ? `Stem expand added ${added} variant(s)`
+      : 'No new stem variants (select seeds or add packs like crypto, airdrop)',
+    added ? 'ok' : '',
+  );
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbSuggestBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const seed =
+    document.getElementById('mbSuggestSeed')?.value?.trim() ||
+    document.getElementById('mbBulkWords')?.value?.trim()?.split(/[\n,]/)[0] ||
+    '';
+  if (!seed) {
+    setMbStatus('Enter a seed word to suggest', 'err');
+    return;
+  }
+  setMbStatus('Suggesting…');
+  const { suggestions, source } = await MB.suggestFromSeed(seed, { useAi: true, limit: 16 });
+  mbPendingSuggestions = suggestions;
+  const box = document.getElementById('mbSuggestList');
+  if (!box) return;
+  if (!suggestions.length) {
+    box.hidden = true;
+    setMbStatus('No suggestions', 'err');
+    return;
+  }
+  box.hidden = false;
+  box.innerHTML = suggestions
+    .map(
+      (s) =>
+        `<button type="button" class="suggest-chip" data-term="${s.replace(/"/g, '&quot;')}">+ ${s}</button>`,
+    )
+    .join('');
+  box.querySelectorAll('.suggest-chip').forEach((chip) => {
+    chip.addEventListener('click', async () => {
+      const term = chip.dataset.term;
+      await MB.addMuteWords([term], source === 'ai' ? 'ai' : 'stem');
+      chip.remove();
+      await refreshMuteBlockUI();
+      notifyMuteBlockUpdated();
+      setMbStatus(`Added “${term}”`, 'ok');
+    });
+  });
+  setMbStatus(`${suggestions.length} suggestions (${source}) — click to add`, 'ok');
+});
+
+document.getElementById('mbRemoveWordsBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ids = selectedIds(document.getElementById('mbWordsList'));
+  if (!ids.length) {
+    setMbStatus('Select words to remove', 'err');
+    return;
+  }
+  await MB.removeByIds('words', ids);
+  await refreshMuteBlockUI();
+  setMbStatus(`Removed ${ids.length}`, 'ok');
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbClearWordsBtn')?.addEventListener('click', async () => {
+  if (!MB || !confirm('Clear all mute words?')) return;
+  await MB.clearList('words');
+  await refreshMuteBlockUI();
+  setMbStatus('Words cleared', 'ok');
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbAddMuteAccBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ta = document.getElementById('mbBulkMuteAcc');
+  const { accounts, words } = MB.parseBulkInput(ta?.value || '', { prefer: 'accounts' });
+  const handles = [...accounts, ...words.map((w) => MB.normalizeUsername(w)).filter(Boolean)];
+  const { added } = await MB.addMuteAccounts(handles, 'manual');
+  if (ta) ta.value = '';
+  await refreshMuteBlockUI();
+  setMbStatus(`Muted ${added} account(s)`, 'ok');
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbRemoveMuteAccBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ids = selectedIds(document.getElementById('mbMuteAccList'));
+  if (!ids.length) return setMbStatus('Select accounts', 'err');
+  await MB.removeByIds('muteAccounts', ids);
+  await refreshMuteBlockUI();
+  notifyMuteBlockUpdated();
+  setMbStatus(`Removed ${ids.length}`, 'ok');
+});
+
+document.getElementById('mbClearMuteAccBtn')?.addEventListener('click', async () => {
+  if (!MB || !confirm('Clear all muted accounts?')) return;
+  await MB.clearList('muteAccounts');
+  await refreshMuteBlockUI();
+  notifyMuteBlockUpdated();
+  setMbStatus('Mute accounts cleared', 'ok');
+});
+
+document.getElementById('mbAddBlockAccBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ta = document.getElementById('mbBulkBlockAcc');
+  const { accounts, words } = MB.parseBulkInput(ta?.value || '', { prefer: 'accounts' });
+  const handles = [...accounts, ...words.map((w) => MB.normalizeUsername(w)).filter(Boolean)];
+  const { added } = await MB.addBlockAccounts(handles, 'manual');
+  if (ta) ta.value = '';
+  await refreshMuteBlockUI();
+  setMbStatus(`Queued ${added} block(s) in list`, 'ok');
+  notifyMuteBlockUpdated();
+});
+
+document.getElementById('mbRemoveBlockAccBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  const ids = selectedIds(document.getElementById('mbBlockAccList'));
+  if (!ids.length) return setMbStatus('Select accounts', 'err');
+  await MB.removeByIds('blockAccounts', ids);
+  await refreshMuteBlockUI();
+  notifyMuteBlockUpdated();
+  setMbStatus(`Removed ${ids.length}`, 'ok');
+});
+
+document.getElementById('mbClearBlockAccBtn')?.addEventListener('click', async () => {
+  if (!MB || !confirm('Clear all block accounts?')) return;
+  await MB.clearList('blockAccounts');
+  await refreshMuteBlockUI();
+  notifyMuteBlockUpdated();
+  setMbStatus('Block list cleared', 'ok');
+});
+
+mbHideSwitch?.addEventListener('click', async () => {
+  if (!MB) return;
+  const on = mbHideSwitch.getAttribute('aria-checked') !== 'true';
+  await MB.updateSettings({ hideMatchingTweets: on });
+  mbHideSwitch.classList.toggle('on', on);
+  mbHideSwitch.setAttribute('aria-checked', on ? 'true' : 'false');
+  notifyMuteBlockUpdated();
+  setMbStatus(on ? 'Hiding matching tweets on timeline' : 'Timeline hide off', 'ok');
+});
+
+document.getElementById('mbApplyXBtn')?.addEventListener('click', async () => {
+  if (!MB) return;
+  setMbStatus('Applying…');
+  try {
+    const state = await MB.loadMuteBlockState();
+    const words = state.muteWords.map((w) => w.term);
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) throw new Error('No active tab');
+    if (!tab.url?.includes('x.com') && !tab.url?.includes('twitter.com')) {
+      setMbStatus('Open x.com/settings/muted_keywords first', 'err');
+      return;
+    }
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: MB.applyMutedKeywordsOnPage,
+      args: [words],
+    });
+    const result = results[0]?.result;
+    setMbStatus(result?.message || 'Done', result?.success ? 'ok' : 'err');
+  } catch (e) {
+    setMbStatus('Apply failed: ' + (e.message || e), 'err');
+  }
+});
+
+function notifyMuteBlockUpdated() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]?.id) {
+      chrome.tabs
+        .sendMessage(tabs[0].id, { type: 'muteBlockUpdated' })
+        .catch(() => {});
+    }
+  });
+}
+
+// Init mute/block UI when popup opens
+if (MB) {
+  refreshMuteBlockUI().catch(() => {});
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[MB.MUTE_BLOCK_KEY]) {
+      refreshMuteBlockUI().catch(() => {});
+    }
+  });
+}
+
 // Clean Interests functionality
 const cleanInterestsBtn = document.getElementById('cleanInterestsBtn');
 const cleanStatus = document.getElementById('cleanStatus');
