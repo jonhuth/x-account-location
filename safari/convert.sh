@@ -21,8 +21,32 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 
 if ! command -v xcrun >/dev/null 2>&1; then
-  echo "error: xcrun not found — install Xcode from the App Store, then:" >&2
+  echo "error: xcrun not found — install full Xcode, then:" >&2
   echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+  exit 1
+fi
+
+DEVDIR="$(xcode-select -p 2>/dev/null || true)"
+if [[ "$DEVDIR" == *"CommandLineTools"* ]]; then
+  echo "error: xcode-select points at Command Line Tools only:" >&2
+  echo "  $DEVDIR" >&2
+  echo "safari-web-extension-converter needs full Xcode.app." >&2
+  if [[ -d /Applications/Xcode.app/Contents/Developer ]]; then
+    echo "Xcode.app is installed. Run:" >&2
+    echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+  else
+    echo "Install full Xcode, then:" >&2
+    echo "  xcodes install --latest    # if xcodes is installed" >&2
+    echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+  fi
+  echo "Re-check: ./safari/doctor.sh" >&2
+  exit 1
+fi
+
+if ! xcrun --find safari-web-extension-converter >/dev/null 2>&1; then
+  echo "error: safari-web-extension-converter not found under current developer dir." >&2
+  echo "  xcode-select -p → ${DEVDIR:-unset}" >&2
+  echo "Install/select full Xcode, then: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
   exit 1
 fi
 

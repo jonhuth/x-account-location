@@ -23,6 +23,14 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
+# Fail early with clear fix if CLT-only (converter lives in full Xcode)
+if [[ -x "${ROOT}/safari/doctor.sh" ]]; then
+  if ! "${ROOT}/safari/doctor.sh" >/tmp/safari-doctor.out 2>&1; then
+    cat /tmp/safari-doctor.out >&2
+    exit 1
+  fi
+fi
+
 TARGET="${1:-all}"
 APP_NAME="${APP_NAME:-X Account Tools}"
 BUNDLE_ID="${BUNDLE_ID:-com.example.xaccounttools}"

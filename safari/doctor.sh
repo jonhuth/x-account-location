@@ -15,47 +15,100 @@ echo "Safari extension doctor"
 echo "======================="
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
-  bad "Not macOS ($(uname -s)). Convert/build must run on a Mac (SSH/agent on Mac OK)."
+  bad "Not macOS ($(uname -s)). Convert/build must run on a Mac."
   exit 1
 fi
 pass "Darwin host"
 
+DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || true)"
+XCODE_APP="/Applications/Xcode.app"
+XCODE_DEV="${XCODE_APP}/Contents/Developer"
+HAS_FULL_XCODE=false
+[[ -d "$XCODE_DEV" ]] && HAS_FULL_XCODE=true
+
+if [[ -z "$DEVELOPER_DIR" ]]; then
+  bad "xcode-select path unset"
+elif [[ "$DEVELOPER_DIR" == *"CommandLineTools"* ]]; then
+  bad "xcode-select points at Command Line Tools only:"
+  echo "      $DEVELOPER_DIR"
+  echo "      safari-web-extension-converter and Simulator need full Xcode.app"
+  if $HAS_FULL_XCODE; then
+    echo "      Xcode.app is installed. Point tools at it:"
+    echo "        sudo xcode-select -s ${XCODE_DEV}"
+    echo "        sudo xcodebuild -license accept   # once, if prompted"
+  else
+    echo "      Install full Xcode, then point tools at it:"
+    if command -v xcodes >/dev/null 2>&1; then
+      echo "        xcodes install --latest   # or: xcodes install 16.4"
+      echo "        xcodes select             # pick the installed app"
+    else
+      echo "        # App Store → Xcode, or: brew install xcodesorg/made/xcodes && xcodes install --latest"
+    fi
+    echo "        sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+  fi
+else
+  pass "xcode-select → $DEVELOPER_DIR"
+fi
+
+if $HAS_FULL_XCODE; then
+  pass "Xcode.app present at $XCODE_APP"
+else
+  bad "Full Xcode.app not found at $XCODE_APP"
+fi
+
 if ! command -v xcrun >/dev/null 2>&1; then
-  bad "xcrun missing — install Xcode (xcodes install <ver> or App Store)"
+  bad "xcrun missing"
 else
   pass "xcrun present"
 fi
 
-if xcode-select -p >/dev/null 2>&1; then
-  pass "xcode-select → $(xcode-select -p)"
-else
-  bad "xcode-select path unset — sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
-fi
-
-if xcrun safari-web-extension-converter --help >/dev/null 2>&1; then
+# Converter only exists under full Xcode
+if xcrun --find safari-web-extension-converter >/dev/null 2>&1 \
+  || [[ -x "${DEVELOPER_DIR}/usr/bin/safari-web-extension-converter" ]] \
+  || [[ -x "${XCODE_DEV}/usr/bin/safari-web-extension-converter" ]]; then
   pass "safari-web-extension-converter available"
 else
-  bad "safari-web-extension-converter missing (needs full Xcode, not CLT-only)"
+  bad "safari-web-extension-converter missing"
+  if $HAS_FULL_XCODE && [[ "$DEVELOPER_DIR" == *"CommandLineTools"* ]]; then
+    echo "      Fix: sudo xcode-select -s ${XCODE_DEV}"
+  elif ! $HAS_FULL_XCODE; then
+    echo "      Fix: install full Xcode (not only CLT), then xcode-select -s it"
+  fi
 fi
 
 if command -v xcodebuild >/dev/null 2>&1; then
-  ver=$(xcodebuild -version 2>/dev/null | head -1 || echo unknown)
-  pass "xcodebuild ($ver)"
+  ver=$(DEVELOPER_DIR="${DEVELOPER_DIR:-}" xcodebuild -version 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+  if [[ -z "$ver" || "$ver" == "unknown" ]]; then
+    # CLT often reports empty/unknown for -version in some setups
+    if [[ "$DEVELOPER_DIR" == *"CommandLineTools"* ]]; then
+      note "xcodebuild present but CLT-only (no real Xcode version string)"
+    else
+      note "xcodebuild present (version string empty)"
+    fi
+  else
+    pass "xcodebuild ($ver)"
+  fi
 else
   bad "xcodebuild missing"
 fi
 
-if xcrun simctl list devices available >/dev/null 2>&1; then
+if xcrun simctl help >/dev/null 2>&1; then
   sims=$(xcrun simctl list devices available 2>/dev/null | grep -c "iPhone" || true)
   pass "simctl OK (~${sims} available iPhone sims listed)"
 else
-  note "simctl unavailable — Simulator builds will fail"
+  bad "simctl unavailable — install full Xcode (includes Simulator)"
 fi
 
 if command -v xcodes >/dev/null 2>&1; then
-  pass "xcodes CLI (Xcode version manager)"
+  pass "xcodes CLI present"
+  # Show installed Xcodes if any
+  if xcodes installed 2>/dev/null | grep -q .; then
+    note "xcodes installed: $(xcodes installed 2>/dev/null | tr '\n' '; ' | sed 's/; $//')"
+  else
+    note "xcodes: no full Xcode installed via xcodes yet — run: xcodes install --latest"
+  fi
 else
-  note "xcodes not installed — brew install xcodesorg/made/xcodes (optional)"
+  note "xcodes not installed (optional helper): brew install xcodesorg/made/xcodes"
 fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -75,21 +128,43 @@ fi
 if [[ -n "${BUNDLE_ID:-}" ]]; then
   pass "BUNDLE_ID=${BUNDLE_ID}"
 else
-  note "BUNDLE_ID unset — convert.sh defaults to com.example.xaccounttools"
+  note "BUNDLE_ID unset — convert.sh defaults to com.example.xaccounttools (change before shipping)"
 fi
 
-# Identities (does not prove Apple ID login)
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development\|Apple Distribution"; then
   pass "codesigning identity found in keychain"
 else
-  note "no Apple Development identity visible — open Xcode once, add Apple ID, create cert"
+  note "no Apple Development identity visible — open full Xcode once, add Apple ID"
 fi
 
 echo
 echo "Summary: ${ok} ok, ${warn} notes, ${fail} failures"
 echo
-echo "Automatable: convert → xcodebuild → simctl install/launch"
-echo "Human once:  Team/signing, device Trust, Safari enable extension, x.com login + site allow"
-echo "See: safari/CLI.md"
 
-[[ "$fail" -eq 0 ]]
+if [[ "$fail" -gt 0 ]]; then
+  echo "Blocked until full Xcode is active. Quick path:"
+  if ! $HAS_FULL_XCODE; then
+    if command -v xcodes >/dev/null 2>&1; then
+      echo "  1. xcodes install --latest"
+      echo "  2. xcodes select"
+    else
+      echo "  1. Install Xcode from App Store (or brew install xcodesorg/made/xcodes && xcodes install --latest)"
+    fi
+    echo "  3. sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    echo "  4. sudo xcodebuild -license accept"
+    echo "  5. open -a Simulator   # first launch downloads runtimes if needed"
+  elif [[ "$DEVELOPER_DIR" == *"CommandLineTools"* ]]; then
+    echo "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    echo "  sudo xcodebuild -license accept"
+  fi
+  echo "  ./safari/doctor.sh   # re-check"
+  echo
+  echo "Then: ./safari/build.sh ios-sim && ./safari/run-sim.sh"
+  echo "Docs: safari/CLI.md"
+  exit 1
+fi
+
+echo "Automatable: convert → xcodebuild → simctl install/launch"
+echo "Human once:  Team/signing, Safari enable extension, x.com login + site allow"
+echo "See: safari/CLI.md"
+exit 0

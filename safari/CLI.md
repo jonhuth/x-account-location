@@ -21,6 +21,25 @@
 
 Chrome remains the fully hands-off loop: load unpacked `extension/` on any machine.
 
+## Full Xcode required (not Command Line Tools)
+
+If doctor says converter missing and `xcode-select -p` contains `CommandLineTools`, you only
+have CLT. Safari packaging needs **Xcode.app**.
+
+```bash
+# Xcode.app already installed:
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -license accept
+open -a Simulator
+
+# Or install via xcodes (you already have the CLI):
+xcodes install --latest
+xcodes select
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+./safari/doctor.sh   # must report 0 failures before build
+```
+
 ## Agent recipe (Mac host)
 
 ```bash
@@ -32,7 +51,7 @@ export DEVELOPMENT_TEAM=XXXXXXXXXX   # 10-char Team ID
 export BUNDLE_ID=com.yourllc.xaccounttools
 export APP_NAME="X Account Tools"
 
-./safari/doctor.sh
+./safari/doctor.sh                   # fails closed on CLT-only
 ./safari/build.sh ios-sim            # convert + build
 ./safari/run-sim.sh                  # boot sim, install app
 ```
