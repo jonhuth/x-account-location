@@ -93,8 +93,26 @@ else
 fi
 
 if xcrun simctl help >/dev/null 2>&1; then
-  sims=$(xcrun simctl list devices available 2>/dev/null | grep -c "iPhone" || true)
-  pass "simctl OK (~${sims} available iPhone sims listed)"
+  pass "simctl available"
+  # Runtimes: "iOS 26.5 (26.5 - ...)" lines — need at least one iOS runtime
+  runtimes=$(xcrun simctl list runtimes 2>/dev/null | grep -cE 'iOS [0-9]' || true)
+  # Available iPhone devices that are not "unavailable"
+  sims=$(xcrun simctl list devices available 2>/dev/null | grep -E 'iPhone' | grep -vc unavailable || true)
+  if [[ "${runtimes:-0}" -eq 0 ]]; then
+    bad "no iOS Simulator runtime installed"
+    echo "      This is why xcodebuild says 'iOS X.Y is not installed'."
+    echo "      Fix (pick one):"
+    echo "        xcodebuild -downloadPlatform iOS"
+    echo "        # or Xcode → Settings → Platforms → iOS → Get"
+  elif [[ "${sims:-0}" -eq 0 ]]; then
+    bad "iOS runtime present but no available iPhone simulators"
+    echo "      Open Simulator once, or: xcrun simctl create 'iPhone 16' ..."
+  else
+    pass "iOS Simulator ready (~${runtimes} runtime(s), ~${sims} iPhone device(s))"
+    # Show a sample device line for copy-paste into IOS_SIM_NAME
+    sample=$(xcrun simctl list devices available 2>/dev/null | grep -E 'iPhone' | head -1 | sed -E 's/^[[:space:]]+//;s/ \([A-F0-9-]{36}\).*//')
+    [[ -n "$sample" ]] && note "example sim: ${sample}"
+  fi
 else
   bad "simctl unavailable — install full Xcode (includes Simulator)"
 fi
