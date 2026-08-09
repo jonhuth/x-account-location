@@ -969,8 +969,17 @@ async function processBotDetection(el) {
     return;
   }
 
-  // Trust signals (following set + passive followed-by → mutual is highest positive)
-  const userFollows = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
+  // Trust signals — multiple sources so people you follow never show "?"
+  // 1) Following list / live set  2) DOM unfollow button  3) passive GraphQL
+  const followsFromList = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
+  const followsFromDom = Boolean(
+    replyData.userFollows ||
+      window.BotDetection?.detectYouFollowFromDom?.(el),
+  );
+  if (followsFromDom && !followsFromList) {
+    window.BotLegitimacy?.noteYouFollow?.(username);
+  }
+  const userFollows = followsFromList || followsFromDom || Boolean(replyData.userFollows);
   const isMutual = Boolean(window.BotLegitimacy?.isMutualWithUser?.(username));
   const trustTier =
     window.BotLegitimacy?.getTrustTier?.(username) ||
@@ -979,8 +988,8 @@ async function processBotDetection(el) {
   replyData.trustTier = trustTier;
   replyData.mutualCount = isMutual ? 1 : 0;
 
-  // Whitelist / override / mutual·follow hard-trust / cache / local — all offline.
-  // Hard-trust returns before short-comment local filters can demote.
+  // Rule stack (offline first): override → whitelist → mutual/follow → cache → local → server
+  // Hard-trust never demoted by short comments or AI failure.
   const local = window.BotCache?.resolveLocally?.(username, replyData, {
     userFollows,
     isMutual,
@@ -1013,7 +1022,11 @@ async function processBotDetection(el) {
     }
     if (passive.verified) replyData.isVerified = true;
     if (passive.location) replyData.location = passive.location;
-    // Relationship: they follow you → may upgrade to mutual hard-trust
+    // Relationship from intercepted GraphQL — instant hard-trust, no Following crawl
+    if (passive.youFollow || passive.followingMe) {
+      window.BotLegitimacy?.noteYouFollow?.(username);
+      replyData.userFollows = true;
+    }
     if (passive.followedBy) {
       window.BotLegitimacy?.noteFollowedBy?.(username);
     }
@@ -1251,11 +1264,16 @@ async function init() {
     window.BotUI?.injectBotStyles?.();
     await window.BotCache?.loadBotCache?.();
     await window.BotCache?.loadWhitelist?.();
-    // Following list: cache-first, background paginate (never blocks UI)
-    window.BotLegitimacy?.initLegitimacy?.().catch?.(() => {});
+    // Await cache load so people you follow are trusted on first paint.
+    // Network Following crawl still backgrounds if cache incomplete.
+    try {
+      await window.BotLegitimacy?.initLegitimacy?.();
+    } catch {
+      /* ignore */
+    }
 
-    // Soft-correct bot/slop chips when follow or mutual trust arrives late
-    // (following crawl or passive followed-by). Never leave short-reply demotions.
+    // Soft-correct chips when follow/mutual arrives late (crawl, GraphQL, DOM).
+    // Never leave bot/slop/"?" on accounts you follow.
     const softCorrectTrust = (usernameHint) => {
       document.querySelectorAll('article[data-testid="tweet"][data-bot-username]').forEach((el) => {
         const u = el.dataset.botUsername;
@@ -1263,9 +1281,10 @@ async function init() {
         if (usernameHint && u !== String(usernameHint).toLowerCase()) return;
         const tier = window.BotLegitimacy?.getTrustTier?.(u);
         if (!window.BotLegitimacy?.isHardTrustTier?.(tier)) return;
-        // Upgrade anyone not already showing mutual/following trust
         const verdict = window.BotLegitimacy.createTrustVerdict(u, tier);
         window.BotCache?.saveBotCache?.(u, verdict);
+        // Force re-paint even if a previous "?" / bot chip was applied
+        delete el.dataset.botVerdict;
         window.BotUI?.applyBotUI?.(el, verdict, u);
         el.dataset.botProcessed = 'human';
       });
@@ -1276,11 +1295,17 @@ async function init() {
       softCorrectTrust(e?.detail?.username);
     });
 
-    // Passive relationship stream from pageScript intercepts
+    // Passive relationship stream from pageScript intercepts (timeline GraphQL)
     window.addEventListener('message', (event) => {
       if (event.source !== window) return;
-      if (event.data?.type === '__relationshipSeen' && event.data.followedBy && event.data.username) {
-        window.BotLegitimacy?.noteFollowedBy?.(event.data.username);
+      if (event.data?.type !== '__relationshipSeen' || !event.data.username) return;
+      const u = event.data.username;
+      // youFollow = YOU follow them (legacy.following); followedBy = they follow you
+      if (event.data.youFollow || event.data.following) {
+        window.BotLegitimacy?.noteYouFollow?.(u);
+      }
+      if (event.data.followedBy) {
+        window.BotLegitimacy?.noteFollowedBy?.(u);
       }
     });
   }

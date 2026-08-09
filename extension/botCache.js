@@ -208,13 +208,13 @@ function stabilizeAccountVerdict(username, seed) {
 
 	let confidence;
 	if (isBot) {
-		// Account bot score — EMA of bot confidences (avgBotConf)
-		confidence = clamp01(Math.max(avg, 0.55), 0.55, 0.99);
+		// Account bot score — EMA of bot-likeness
+		confidence = clamp01(avg, 0.65, 0.99);
 	} else if (isSlop) {
-		confidence = clamp01(0.55 + avg * 0.4, 0.55, 0.95);
+		confidence = clamp01(0.6 + avg * 0.3, 0.6, 0.92);
 	} else {
-		// Account human score — inverse of bot-likeness
-		confidence = clamp01(1 - avg, 0.55, 0.99);
+		// Account human score — inverse of bot-likeness (don't floor so low it looks "unsure")
+		confidence = clamp01(1 - avg, 0.7, 0.99);
 	}
 
 	const category = isBot
@@ -486,20 +486,26 @@ function getAccountPriorVerdict(username) {
 	const key = String(username || "").toLowerCase();
 	const score = accountScores.get(key);
 	if (!score || score.samples < ACCOUNT_PRIOR_MIN_SAMPLES) return null;
-	if (score.avgBotConf < ACCOUNT_PRIOR_CONF && !score.isBot) {
-		// Strong human prior
+	const avg = clamp01(Number(score.avgBotConf) || 0);
+
+	// Strong human prior: low bot-likeness across samples
+	if (avg < ACCOUNT_PRIOR_CONF && !score.isBot) {
 		if (score.genuineHits >= ACCOUNT_PRIOR_MIN_SAMPLES && !score.isBot) {
+			// Human confidence = inverse of bot-likeness (was inverted — looked "unsure")
+			const humanConf = clamp01(1 - avg, 0.75, 0.99);
 			return {
 				isBot: false,
 				isSlop: Boolean(score.isSlop),
-				confidence: Math.min(0.9, 0.55 + score.avgBotConf * 0.4),
+				confidence: score.isSlop
+					? clamp01(0.65 + avg * 0.2, 0.65, 0.9)
+					: humanConf,
 				category: score.isSlop ? "llm_slop" : "genuine",
 				reason: score.isSlop
-					? "Account often posts slop (local prior)"
-					: "Consistent human prior from prior replies",
+					? "Account often posts slop (account prior)"
+					: "Consistent human across prior posts",
 				signals: ["account_prior_human"],
 				source: "account_prior",
-				accountScore: score.avgBotConf,
+				accountScore: avg,
 				replyScore: null,
 			};
 		}
@@ -509,12 +515,12 @@ function getAccountPriorVerdict(username) {
 		return {
 			isBot: true,
 			isSlop: Boolean(score.isSlop),
-			confidence: Math.min(0.92, score.avgBotConf),
+			confidence: clamp01(avg, 0.7, 0.99),
 			category: score.lastCategory || "crypto_spam",
-			reason: "Repeated bot/slop pattern on this account",
+			reason: "Repeated bot pattern on this account",
 			signals: ["account_prior_bot"],
 			source: "account_prior",
-			accountScore: score.avgBotConf,
+			accountScore: avg,
 			replyScore: null,
 		};
 	}
@@ -700,11 +706,17 @@ async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
 
 /**
  * Resolve a verdict with zero X load and minimal backend load.
- * Order: override → whitelist → mutual/follow hard-trust → cache → local template → account prior → server
  *
- * Mutual follow is the strongest positive signal we have. Short engagement
- * templates (localClassify) and reply-level slop must never demote mutuals or
- * accounts you follow.
+ * RULE STACK (first match wins — keep this short):
+ *  1. Your override (Human / Bot / Slop mark)
+ *  2. Whitelist
+ *  3. Hard trust: mutual > you-follow  → blue ✓/↔, NEVER "?", NEVER AI
+ *  4. Account cache (stable chip for this @user)
+ *  5. Local profile/template signals (ratio, short spam) — strangers only
+ *  6. Account prior (after enough samples)
+ *  7. else → server AI
+ *
+ * People you follow must never look "unsure". Short replies must never demote them.
  */
 function resolveLocally(username, replyData, opts = {}) {
 	const key = String(username || "").toLowerCase();
@@ -721,14 +733,14 @@ function resolveLocally(username, replyData, opts = {}) {
 			isSlop: false,
 			confidence: 1,
 			category: "genuine",
-			reason: "Whitelisted",
+			reason: "You marked this account as human",
 			signals: ["whitelist"],
 			source: "trust",
 			trustTier: "whitelist",
 		};
 	}
 
-	// 3. Social hard-trust: mutual > following (personalized — never multi-tenant)
+	// 3. Social hard-trust: mutual > following (list / DOM / GraphQL — any source)
 	const userFollows =
 		opts.userFollows === true ||
 		replyData?.userFollows === true ||
@@ -737,23 +749,39 @@ function resolveLocally(username, replyData, opts = {}) {
 		opts.isMutual === true ||
 		replyData?.trustTier === "mutual" ||
 		Boolean(L?.isMutualWithUser?.(key));
+	// Live tier wins if set already knows about them
+	const liveTier = L?.getTrustTier?.(key);
 	const trustTier =
-		opts.trustTier ||
-		(isMutual ? "mutual" : userFollows ? "following" : L?.getTrustTier?.(key) || "none");
+		liveTier === "mutual" || liveTier === "following"
+			? liveTier
+			: opts.trustTier ||
+				(isMutual ? "mutual" : userFollows ? "following" : "none");
 
-	if (trustTier === "mutual" || trustTier === "following" || userFollows || isMutual) {
-		const tier = isMutual || trustTier === "mutual" ? "mutual" : "following";
+	if (
+		trustTier === "mutual" ||
+		trustTier === "following" ||
+		userFollows ||
+		isMutual ||
+		L?.isHardTrustTier?.(liveTier)
+	) {
+		const tier =
+			isMutual || trustTier === "mutual" || liveTier === "mutual"
+				? "mutual"
+				: "following";
+		// Learn follow into the live set for later tweets
+		if (userFollows || tier === "following" || tier === "mutual") {
+			L?.noteYouFollow?.(key);
+		}
 		return (
-			L?.createTrustVerdict?.(key, tier) ||
-			L?.createFollowTrustVerdict?.(key) || {
+			L?.createTrustVerdict?.(key, tier) || {
 				isBot: false,
 				isSlop: false,
-				confidence: tier === "mutual" ? 0.99 : 0.96,
+				confidence: 1,
 				category: "genuine",
 				reason:
 					tier === "mutual"
-						? "Mutual follow — highest trust signal"
-						: "Account you follow",
+						? "Mutual — you follow each other (hard trust)"
+						: "You follow this account (hard trust — not scored)",
 				signals:
 					tier === "mutual"
 						? ["mutual_follow", "user_follows", "followed_by", "hard_trust"]

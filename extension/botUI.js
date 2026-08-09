@@ -444,41 +444,41 @@ function buildTooltip(verdict) {
   const lines = [];
 
   if (isUnknownVerdict(verdict)) {
-    lines.push('Score unavailable');
+    lines.push('Not scored — classification unavailable');
+  } else if (
+    verdict.source === 'trust' ||
+    verdict.trustTier === 'mutual' ||
+    verdict.trustTier === 'following' ||
+    verdict.trustTier === 'whitelist'
+  ) {
+    if (verdict.trustTier === 'mutual') {
+      lines.push('Trusted — mutual follow');
+    } else if (verdict.trustTier === 'whitelist') {
+      lines.push('Trusted — you marked human');
+    } else {
+      lines.push('Trusted — you follow this account');
+    }
+    lines.push('Not bot-scored (hard trust)');
   } else if (verdict.isBot) {
-    lines.push(`${conf}% bot (account score)`);
+    lines.push(`${conf}% bot`);
   } else if (verdict.isSlop) {
-    lines.push(`${conf}% slop (account score)`);
+    lines.push(`${conf}% slop`);
   } else {
-    lines.push(`${conf}% human (account score)`);
+    lines.push(`${conf}% human`);
   }
 
-  if (verdict.category && verdict.category !== 'genuine' && !isUnknownVerdict(verdict)) {
+  if (verdict.category && verdict.category !== 'genuine' && !isUnknownVerdict(verdict) && verdict.source !== 'trust') {
     const categoryLabel = CATEGORY_LABELS[verdict.category] || verdict.category;
     lines.push(`Type: ${categoryLabel}`);
   }
 
-  if (verdict.source) {
-    lines.push(`Source: ${verdict.source}`);
-  }
-
-  if (verdict.trustTier && verdict.trustTier !== 'none') {
-    lines.push(`Trust: ${verdict.trustTier}`);
-  }
-
-  if (verdict.accountScore != null) {
-    lines.push(`Bot-likeness: ${Math.round(Number(verdict.accountScore) * 100)}%`);
-  }
-
-  if (verdict.replyScore != null && verdict.source !== 'trust' && verdict.source !== 'override') {
-    lines.push(`This post signal: ${Math.round(Number(verdict.replyScore) * 100)}% bot-like`);
-  }
-
-  if (verdict.reason) {
+  if (verdict.reason && verdict.source !== 'trust') {
+    lines.push(verdict.reason);
+  } else if (verdict.reason && verdict.source === 'trust') {
     lines.push(verdict.reason);
   }
 
-  if (Array.isArray(verdict.signals) && verdict.signals.length > 0) {
+  if (Array.isArray(verdict.signals) && verdict.signals.length > 0 && verdict.source !== 'trust') {
     lines.push(verdict.signals.map((s) => `• ${s}`).join('\n'));
   }
 
@@ -508,6 +508,7 @@ function createBotBadge(verdict, animate = true) {
     badge.removeAttribute('role');
   } else if (isUnknownVerdict(verdict)) {
     // Never show green ✓0 — that looked like "100% human with score zero"
+    // Also never use this path for people you follow (trust resolves first).
     severity = 'unknown';
     text = '?';
     title = buildTooltip(verdict);
@@ -518,8 +519,8 @@ function createBotBadge(verdict, animate = true) {
     verdict.trustTier === 'whitelist'
   ) {
     severity = 'trust';
-    // Mutuals: compact mark; following/whitelist share trust styling
-    text = verdict.trustTier === 'mutual' ? `↔${conf}` : `✓${conf}`;
+    // Hard trust: mark only — no fake "96" score (you follow them = not scored)
+    text = verdict.trustTier === 'mutual' ? '↔' : '✓';
     title = buildTooltip(verdict);
   } else if (verdict.isBot) {
     severity = getSeverityLevel(verdict.confidence || 0);

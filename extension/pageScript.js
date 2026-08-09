@@ -72,15 +72,20 @@
 			const drop = Math.floor(keys.length / 2);
 			for (let i = 0; i < drop; i++) userDataCache.delete(keys[i]);
 		}
-		// Surface followed-by so content can promote mutual hard-trust without extra API
-		if (entry.followedBy) {
+		// Surface relationship to content immediately — do NOT wait for Following crawl.
+		// X GraphQL: legacy.following = YOU follow them; legacy.followed_by = they follow you.
+		const youFollow = Boolean(entry.youFollow ?? entry.followingMe);
+		const followedBy = Boolean(entry.followedBy);
+		if (youFollow || followedBy) {
 			try {
 				window.postMessage(
 					{
 						type: "__relationshipSeen",
 						username: key,
-						followedBy: true,
-						following: Boolean(entry.followingMe),
+						youFollow,
+						followedBy,
+						// legacy aliases for older content handlers
+						following: youFollow,
 					},
 					"*",
 				);
@@ -97,6 +102,16 @@
 			const legacy = obj.legacy;
 			const username = String(legacy.screen_name || "").toLowerCase();
 			if (username) {
+				// Relationship fields often present on timeline/user objects
+				const youFollow = Boolean(
+					legacy.following ||
+						obj.relationship?.following ||
+						obj.superFollowing ||
+						false,
+				);
+				const followedBy = Boolean(
+					legacy.followed_by || obj.relationship?.followed_by || false,
+				);
 				cacheUser({
 					id: obj.rest_id,
 					username: legacy.screen_name,
@@ -112,11 +127,10 @@
 					hasCustomAvatar: !String(
 						legacy.profile_image_url_https || "",
 					).includes("default_profile"),
-					// Relationship fields when present (rare in timeline payloads)
-					followedBy: Boolean(
-						obj.legacy?.followed_by || obj.relationship?.followed_by,
-					),
-					followingMe: Boolean(obj.legacy?.following),
+					youFollow,
+					followedBy,
+					// keep old key for any readers
+					followingMe: youFollow,
 				});
 			}
 		}
