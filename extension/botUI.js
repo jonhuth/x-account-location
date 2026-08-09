@@ -410,9 +410,11 @@ function getSeverityLevel(confidence) {
 }
 
 /**
- * SCORING: confidence = how sure AI is about its classification
- * - isBot=true, confidence=0.95 → 95% sure it's a bot
- * - isBot=false, confidence=0.95 → 95% sure it's human
+ * SCORING (account-level):
+ * - Chip confidence is stabilized per @username across posts (not raw per-reply AI conf)
+ * - isBot=true, confidence=0.95 → 95% account bot score
+ * - isBot=false, confidence=0.95 → 95% account human score
+ * - Tooltip may still show "this post signal" separately
  *
  * DISPLAY: Compact score chip; styling lives entirely in BOT_UI_STYLES
  */
@@ -444,11 +446,11 @@ function buildTooltip(verdict) {
   if (isUnknownVerdict(verdict)) {
     lines.push('Score unavailable');
   } else if (verdict.isBot) {
-    lines.push(`${conf}% bot confidence`);
+    lines.push(`${conf}% bot (account score)`);
   } else if (verdict.isSlop) {
-    lines.push(`${conf}% slop confidence (human, low-info)`);
+    lines.push(`${conf}% slop (account score)`);
   } else {
-    lines.push(`${conf}% human confidence`);
+    lines.push(`${conf}% human (account score)`);
   }
 
   if (verdict.category && verdict.category !== 'genuine' && !isUnknownVerdict(verdict)) {
@@ -465,7 +467,11 @@ function buildTooltip(verdict) {
   }
 
   if (verdict.accountScore != null) {
-    lines.push(`Account prior: ${Math.round(Number(verdict.accountScore) * 100)}%`);
+    lines.push(`Bot-likeness: ${Math.round(Number(verdict.accountScore) * 100)}%`);
+  }
+
+  if (verdict.replyScore != null && verdict.source !== 'trust' && verdict.source !== 'override') {
+    lines.push(`This post signal: ${Math.round(Number(verdict.replyScore) * 100)}% bot-like`);
   }
 
   if (verdict.reason) {
@@ -885,24 +891,41 @@ function applyBotUI(replyElement, verdict, username) {
       if (match?.[1]) resolvedUsername = match[1];
     }
   }
+
+  // Prefer account-stable cache so the same @user never shows 99 on one post and 88 on another
+  let displayVerdict = verdict;
+  if (verdict?.isBot !== 'pending' && resolvedUsername) {
+    const pinned =
+      verdict?.source === 'override' ||
+      verdict?.source === 'trust' ||
+      verdict?.trustTier === 'mutual' ||
+      verdict?.trustTier === 'following' ||
+      verdict?.trustTier === 'whitelist';
+    if (!pinned) {
+      const cached = window.BotCache?.getCachedVerdict?.(resolvedUsername);
+      if (cached && !isUnknownVerdict(cached)) {
+        displayVerdict = cached;
+      }
+    }
+  }
   
   // Skip if same verdict
   const existingVerdict = container.dataset.botVerdict;
-  if (existingVerdict === JSON.stringify(verdict)) return;
+  if (existingVerdict === JSON.stringify(displayVerdict)) return;
   
   // Remove any existing UI
   removeBotUI(container);
   
   // Store verdict
-  container.dataset.botVerdict = JSON.stringify(verdict);
+  container.dataset.botVerdict = JSON.stringify(displayVerdict);
   container.dataset.botUsername = resolvedUsername.toLowerCase();
   
-  const confidence = verdict.confidence || 0;
+  const confidence = displayVerdict.confidence || 0;
   const userNameContainer = container.querySelector('[data-testid="UserName"], [data-testid="User-Name"]');
   
   // ALWAYS show a score badge (human, slop, bot, or unknown)
   if (userNameContainer) {
-    const badge = createBotBadge(verdict, true);
+    const badge = createBotBadge(displayVerdict, true);
     const toggleActions = (e) => {
       e.stopPropagation();
       e.preventDefault();
@@ -916,8 +939,8 @@ function applyBotUI(replyElement, verdict, username) {
     insertBotBadge(userNameContainer, badge, resolvedUsername);
   }
   
-  // Dim / flag bots
-  if (verdict.isBot === true) {
+  // Dim / flag bots (account-level class)
+  if (displayVerdict.isBot === true) {
     const severity = getSeverityLevel(confidence);
     
     if (severity === 'high') {
@@ -947,7 +970,7 @@ function applyBotUI(replyElement, verdict, username) {
         }
       });
     }
-  } else if (verdict.isSlop === true && confidence >= 0.65) {
+  } else if (displayVerdict.isSlop === true && confidence >= 0.65) {
     // Lighter treatment for slop-only (not hard bot)
     container.classList.add('bot-reply-flagged-slop');
     container.classList.add('bot-reply-slop');
@@ -993,6 +1016,33 @@ function applyOverrideEverywhere(username, verdict, status) {
     removeBotUI(el);
     if (verdict) applyBotUI(el, verdict, username);
     el.dataset.botProcessed = status;
+  });
+}
+
+/**
+ * Re-apply the same account verdict to every on-screen post by this user
+ * so chips never diverge (e.g. 99 on one tweet, 88 on another).
+ */
+function syncUsername(username, verdict) {
+  if (!verdict || isUnknownVerdict(verdict)) return;
+  const lower = String(username || '').toLowerCase();
+  if (!lower) return;
+  const serialized = JSON.stringify(verdict);
+
+  document.querySelectorAll(`[data-bot-username="${lower}"]`).forEach((el) => {
+    try {
+      if (el.dataset.botVerdict === serialized) return;
+    } catch { /* ignore */ }
+    // Force applyBotUI past the "same verdict" early-return
+    delete el.dataset.botVerdict;
+    applyBotUI(el, verdict, lower);
+    if (!el.dataset.botProcessed || el.dataset.botProcessed === 'pending') {
+      el.dataset.botProcessed = verdict.isBot
+        ? 'bot'
+        : verdict.isSlop
+          ? 'slop'
+          : 'human';
+    }
   });
 }
 
@@ -1244,6 +1294,7 @@ if (typeof window !== 'undefined') {
     hideQuickActions,
     toggleQuickActions,
     addQuickActions,
+    syncUsername,
     getUserNameRoot,
     ensureChipHost,
     insertIntoChipHost,

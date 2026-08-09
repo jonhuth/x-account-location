@@ -987,11 +987,14 @@ async function processBotDetection(el) {
     trustTier,
   });
   if (local) {
+    let display = local;
     if (local.source !== 'cache' && !local.expiry) {
-      window.BotCache?.saveBotCache?.(username, local);
+      display = window.BotCache?.saveBotCache?.(username, local) || local;
+    } else {
+      display = window.BotCache?.getCachedVerdict?.(username) || local;
     }
-    window.BotUI?.applyBotUI?.(el, local, username);
-    el.dataset.botProcessed = local.isBot ? 'bot' : (local.isSlop ? 'slop' : 'human');
+    window.BotUI?.applyBotUI?.(el, display, username);
+    el.dataset.botProcessed = display.isBot ? 'bot' : (display.isSlop ? 'slop' : 'human');
     el.dataset.botUsername = username.toLowerCase();
     return;
   }
@@ -1040,13 +1043,16 @@ async function processBotDetection(el) {
       trustTier: replyData.trustTier,
     });
     if (afterPassive) {
+      let display = afterPassive;
       if (afterPassive.source !== 'cache' && !afterPassive.expiry) {
-        window.BotCache?.saveBotCache?.(username, afterPassive);
+        display = window.BotCache?.saveBotCache?.(username, afterPassive) || afterPassive;
+      } else {
+        display = window.BotCache?.getCachedVerdict?.(username) || afterPassive;
       }
-      window.BotUI?.applyBotUI?.(el, afterPassive, username);
-      el.dataset.botProcessed = afterPassive.isBot
+      window.BotUI?.applyBotUI?.(el, display, username);
+      el.dataset.botProcessed = display.isBot
         ? 'bot'
-        : afterPassive.isSlop
+        : display.isSlop
           ? 'slop'
           : 'human';
       el.dataset.botUsername = username.toLowerCase();
@@ -1059,8 +1065,9 @@ async function processBotDetection(el) {
   // Status/detail only: near-duplicate reply *clusters* (2+ look-alike alts)
   const threadDup = window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
   if (threadDup?.verdict) {
-    window.BotCache?.saveBotCache?.(username, threadDup.verdict);
-    window.BotUI?.applyBotUI?.(el, threadDup.verdict, username);
+    const display =
+      window.BotCache?.saveBotCache?.(username, threadDup.verdict) || threadDup.verdict;
+    window.BotUI?.applyBotUI?.(el, display, username);
     el.dataset.botProcessed = 'bot';
     el.dataset.botUsername = username.toLowerCase();
     const peers = Array.isArray(threadDup.peerUsernames)

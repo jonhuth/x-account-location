@@ -117,13 +117,173 @@ function isUnknownVerdict(verdict) {
 	return !Number.isFinite(conf) || conf <= 0;
 }
 
+/**
+ * Reply-level classify confidences (AI/local) vary by post. The chip must be
+ * **account-level**: same @user → same number everywhere. We fold each reply
+ * into a rolling bot-likeness, then derive one display verdict.
+ */
+function replyBotness(verdict) {
+	const conf = Math.min(1, Math.max(0, Number(verdict?.confidence) || 0));
+	if (verdict?.isBot) return conf;
+	if (verdict?.isSlop) return Math.min(0.85, 0.4 + conf * 0.35);
+	return 1 - conf; // high human conf → low bot-likeness
+}
+
+function clamp01(n, lo = 0, hi = 1) {
+	return Math.min(hi, Math.max(lo, n));
+}
+
+function isHardPinnedVerdict(verdict) {
+	if (!verdict) return false;
+	if (verdict.source === "trust" || verdict.source === "override") return true;
+	const tier = verdict.trustTier;
+	return (
+		tier === "mutual" ||
+		tier === "following" ||
+		tier === "whitelist" ||
+		tier === "override_human" ||
+		tier === "override_bot" ||
+		tier === "override_slop"
+	);
+}
+
+/**
+ * Build the single chip verdict for an account after absorbing `seed` (latest reply).
+ */
+function stabilizeAccountVerdict(username, seed) {
+	const key = String(username || "").toLowerCase();
+	const existing = botVerdictCache.get(key);
+	const score = accountScores.get(key);
+
+	// Trust / user override — never average with reply noise
+	if (isHardPinnedVerdict(seed)) {
+		const conf = Math.min(1, Math.max(0, Number(seed.confidence) || 0.99));
+		return {
+			...normalizeVerdict(seed),
+			confidence: conf,
+			accountScore: seed.isBot ? conf : 1 - conf,
+			replyScore: replyBotness(seed),
+		};
+	}
+	if (existing && isHardPinnedVerdict(existing) && !isHardPinnedVerdict(seed)) {
+		return {
+			...normalizeVerdict(existing),
+			replyScore: replyBotness(seed),
+		};
+	}
+
+	const replyScore = replyBotness(seed);
+	const samples = score?.samples || 0;
+
+	// First sample for this account — use this reply as the account score
+	if (!score || samples < 1) {
+		return {
+			...normalizeVerdict(seed),
+			accountScore: replyScore,
+			replyScore,
+		};
+	}
+
+	const avg = clamp01(Number(score.avgBotConf) || replyScore);
+	// Class from aggregate (majority + bot-likeness), not the latest reply alone
+	let isBot =
+		Boolean(score.isBot) ||
+		(score.botHits >= 1 && avg >= 0.62) ||
+		(score.botHits > score.genuineHits && score.botHits >= 1);
+	let isSlop =
+		!isBot &&
+		(Boolean(score.isSlop) ||
+			(score.slopHits >= 1 && avg >= 0.35 && avg < 0.62));
+
+	// Soften: one weak local hit should not flip a multi-sample human
+	if (
+		isBot &&
+		score.genuineHits >= 2 &&
+		score.botHits === 1 &&
+		avg < 0.7 &&
+		!seed.isBot
+	) {
+		isBot = false;
+	}
+
+	let confidence;
+	if (isBot) {
+		// Account bot score — EMA of bot confidences (avgBotConf)
+		confidence = clamp01(Math.max(avg, 0.55), 0.55, 0.99);
+	} else if (isSlop) {
+		confidence = clamp01(0.55 + avg * 0.4, 0.55, 0.95);
+	} else {
+		// Account human score — inverse of bot-likeness
+		confidence = clamp01(1 - avg, 0.55, 0.99);
+	}
+
+	const category = isBot
+		? score.lastCategory && score.lastCategory !== "genuine"
+			? score.lastCategory
+			: seed.category || "crypto_spam"
+		: isSlop
+			? "llm_slop"
+			: "genuine";
+
+	// Prefer reason/signals from a reply that matches the account class
+	const seedMatches =
+		(isBot && seed.isBot) ||
+		(isSlop && seed.isSlop && !seed.isBot) ||
+		(!isBot && !isSlop && !seed.isBot && !seed.isSlop);
+	const stripAccountSuffix = (r) =>
+		String(r || "")
+			.replace(/\s*\(account score from \d+ posts\)\s*$/i, "")
+			.trim();
+	const reason = stripAccountSuffix(
+		seedMatches
+			? seed.reason || existing?.reason || "Account-level score"
+			: existing?.reason || seed.reason || "Account-level score",
+	);
+	const rawSignals = seedMatches
+		? Array.isArray(seed.signals)
+			? seed.signals
+			: existing?.signals || []
+		: existing?.signals || seed.signals || [];
+	const signals = (Array.isArray(rawSignals) ? rawSignals : [])
+		.filter((s) => s !== "account_stable" && s !== "first_sample")
+		.slice(0, 6);
+
+	// Once we have 2+ samples, mark source so UI/tooltip shows account-level
+	const source =
+		samples >= 2
+			? "account"
+			: seed.source || existing?.source || "ai";
+
+	return normalizeVerdict({
+		isBot,
+		isSlop,
+		confidence,
+		category,
+		reason:
+			samples >= 2
+				? `${reason} (account score from ${samples} posts)`
+				: reason,
+		signals: [
+			...signals,
+			samples >= 2 ? "account_stable" : "first_sample",
+		].slice(0, 8),
+		source,
+		trustTier: seed.trustTier || existing?.trustTier || "none",
+		accountScore: avg,
+		replyScore,
+	});
+}
+
+/**
+ * Persist + stabilize. Returns the **account-level** verdict that should be shown
+ * on every post by this user (or null if skipped).
+ */
 function saveBotCache(username, verdict) {
 	const key = String(username || "").toLowerCase();
 	const now = Date.now();
-	const confidence = verdict.confidence || 0;
 
 	// Never cache failed/zero-score placeholders — they poisoned the UI as green ✓0
-	if (isUnknownVerdict(verdict)) return;
+	if (isUnknownVerdict(verdict)) return null;
 
 	// Never let short-reply / bot verdicts overwrite mutual or following hard-trust
 	const existing = botVerdictCache.get(key);
@@ -133,7 +293,7 @@ function saveBotCache(username, verdict) {
 		L?.isHardTrustTier?.(liveTier) &&
 		(verdict.isBot || verdict.isSlop || verdict.source === "local")
 	) {
-		return;
+		return existing || null;
 	}
 	if (
 		existing &&
@@ -144,37 +304,64 @@ function saveBotCache(username, verdict) {
 		verdict.trustTier !== "mutual" &&
 		verdict.trustTier !== "following"
 	) {
-		return;
+		return existing;
 	}
+
+	// Absorb this reply into rolling account reputation
+	if (!isHardPinnedVerdict(verdict)) {
+		updateAccountScore(key, verdict);
+	}
+
+	// One stable chip per account — not per post
+	const stable = stabilizeAccountVerdict(key, verdict);
+	const confidence = stable.confidence || 0;
 
 	let expiryDays;
 	if (confidence >= 0.75) expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
 	else if (confidence >= 0.5) expiryDays = BOT_CACHE_EXPIRY_MED_CONF_DAYS;
 	else expiryDays = BOT_CACHE_EXPIRY_LOW_CONF_DAYS;
 
-	// Local/trust verdicts are personal — cache but shorter for low-conf local
-	if (verdict.source === "local" && confidence < 0.85) {
+	if (stable.source === "local" && confidence < 0.85) {
 		expiryDays = Math.min(expiryDays, 3);
 	}
-	if (verdict.source === "trust" || verdict.source === "override") {
+	if (
+		stable.source === "trust" ||
+		stable.source === "override" ||
+		stable.source === "account"
+	) {
 		expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
 	}
 
 	const expiry = now + expiryDays * 24 * 60 * 60 * 1000;
 
-	botVerdictCache.set(key, {
-		...normalizeVerdict(verdict),
+	const stored = {
+		...stable,
 		expiry,
 		cachedAt: now,
-	});
-
-	updateAccountScore(key, verdict);
+	};
+	botVerdictCache.set(key, stored);
 
 	if (!pendingCacheSave) {
 		pendingCacheSave = setTimeout(async () => {
 			await persistBotCache();
 			pendingCacheSave = null;
 		}, BOT_CACHE_SAVE_INTERVAL);
+	}
+
+	// Keep every visible tweet for this @user on the same chip
+	syncAccountUI(key);
+	return stored;
+}
+
+/** Push the cached account verdict onto every on-screen tweet for this user. */
+function syncAccountUI(username) {
+	const key = String(username || "").toLowerCase();
+	const verdict = getCachedVerdict(key);
+	if (!verdict) return;
+	try {
+		window.BotUI?.syncUsername?.(key, verdict);
+	} catch {
+		/* UI not ready */
 	}
 }
 
@@ -244,14 +431,20 @@ function updateAccountScore(username, verdict) {
 	const conf = Number(verdict.confidence) || 0;
 	const samples = prev.samples + 1;
 	const botHits = prev.botHits + (verdict.isBot ? 1 : 0);
-	const genuineHits = prev.genuineHits + (!verdict.isBot ? 1 : 0);
-	const slopHits = prev.slopHits + (verdict.isSlop ? 1 : 0);
+	const genuineHits =
+		prev.genuineHits + (!verdict.isBot && !verdict.isSlop ? 1 : 0);
+	const slopHits = prev.slopHits + (verdict.isSlop && !verdict.isBot ? 1 : 0);
+	// Rolling bot-likeness across posts (not raw reply confidence)
+	const botness = replyBotness(verdict);
 	const avgBotConf =
-		(prev.avgBotConf * prev.samples + (verdict.isBot ? conf : 1 - conf)) /
-		samples;
+		(prev.avgBotConf * prev.samples + botness) / samples;
 
-	const isBot = botHits > genuineHits && botHits >= 2;
-	const isSlop = slopHits >= 2 || (verdict.isSlop && conf >= 0.8);
+	const isBot =
+		(botHits > genuineHits && botHits >= 2) ||
+		(botHits >= 2 && avgBotConf >= 0.65);
+	const isSlop =
+		!isBot &&
+		(slopHits >= 2 || (verdict.isSlop && conf >= 0.8 && slopHits >= 1));
 
 	accountScores.set(key, {
 		botHits,
@@ -259,7 +452,9 @@ function updateAccountScore(username, verdict) {
 		slopHits,
 		samples,
 		avgBotConf,
-		lastCategory: verdict.category || prev.lastCategory,
+		lastCategory: verdict.isBot
+			? verdict.category || prev.lastCategory
+			: prev.lastCategory || verdict.category || "genuine",
 		isBot,
 		isSlop,
 		updatedAt: Date.now(),
@@ -569,7 +764,7 @@ function resolveLocally(username, replyData, opts = {}) {
 		);
 	}
 
-	// 4. Session/storage cache
+	// 4. Session/storage cache — always the **account** chip, not this reply's score
 	const cached = getCachedVerdict(key);
 	if (cached && opts.allowCache !== false) {
 		// Never keep a cached bot/slop if we somehow have hard-trust on the verdict already
@@ -582,15 +777,21 @@ function resolveLocally(username, replyData, opts = {}) {
 			return cached;
 		}
 
-		// Short-reply local filters may upgrade *strangers* from stale human → slop,
-		// but must never run against hard-trust tiers (handled above).
+		// Class upgrades only (human → slop/bot). Absorb into account EMA, return
+		// the stabilized account verdict so two posts never show 99 vs 88.
 		const local = window.BotDetection?.localClassify?.(replyData);
-		if (local && local.isSlop && !cached.isBot && !cached.isSlop) {
-			// Guard: if cached says trust, keep trust
-			if (L?.isHardTrustTier?.(cached.trustTier)) {
-				return cached;
+		if (local && !isHardPinnedVerdict(cached)) {
+			const upgradesBot = local.isBot && !cached.isBot;
+			const upgradesSlop =
+				local.isSlop && !cached.isBot && !cached.isSlop && !local.isBot;
+			if (upgradesBot || upgradesSlop) {
+				if (L?.isHardTrustTier?.(cached.trustTier)) {
+					return cached;
+				}
+				// Fold evidence in; saveBotCache stabilizes + syncs all chips
+				saveBotCache(key, local);
+				return getCachedVerdict(key) || cached;
 			}
-			return { ...local, accountScore: cached.accountScore };
 		}
 		return cached;
 	}
@@ -622,11 +823,12 @@ function queueForClassification(username, replyData) {
 		// cache hits also return from resolveLocally with full object
 	}
 	if (localVerdict) {
-		// Always persist non-cache resolutions
+		// Always persist non-cache resolutions as account-stable chips
 		if (localVerdict.source !== "cache" && !localVerdict.expiry) {
-			saveBotCache(key, localVerdict);
+			const stable = saveBotCache(key, localVerdict);
+			return Promise.resolve(stable || getCachedVerdict(key) || localVerdict);
 		}
-		return Promise.resolve(localVerdict);
+		return Promise.resolve(getCachedVerdict(key) || localVerdict);
 	}
 
 	// Also handle pure cache from resolveLocally when allowCache default
@@ -695,9 +897,10 @@ async function dispatchBatch() {
 
 			if (verdict && !isUnknownVerdict(verdict)) {
 				verdict = mergeReplyAccountScores(item.username, verdict);
-				saveBotCache(item.username, verdict);
+				const stable = saveBotCache(item.username, verdict);
 				pendingBotRequests.delete(item.username);
-				item.resolve(verdict);
+				// Resolve with account-level score, not raw reply conf
+				item.resolve(stable || getCachedVerdict(item.username) || verdict);
 			} else if (verdict && isUnknownVerdict(verdict)) {
 				// Server sent a zero-conf placeholder — surface as unknown, do not cache
 				const fallback = {
@@ -740,17 +943,17 @@ function sanitizeForServer(replyData) {
 }
 
 function mergeReplyAccountScores(username, verdict) {
-	const score = accountScores.get(username.toLowerCase());
+	// Keep reply fields for telemetry; display confidence is stabilized in saveBotCache
 	const conf = Number(verdict.confidence) || 0;
-	const replyScore = verdict.isBot ? conf : 1 - conf;
-	const accountScore = score
-		? score.avgBotConf
-		: replyScore;
+	const replyScore = replyBotness(verdict);
+	const score = accountScores.get(String(username || "").toLowerCase());
 	return {
 		...normalizeVerdict(verdict),
 		replyScore,
-		accountScore,
+		accountScore: score ? score.avgBotConf : replyScore,
 		isSlop: Boolean(verdict.isSlop),
+		// Preserve raw reply confidence until saveBotCache folds it into account
+		confidence: conf,
 	};
 }
 
@@ -762,9 +965,9 @@ async function retryIndividual(item) {
 		);
 		if (verdict && !isUnknownVerdict(verdict)) {
 			const merged = mergeReplyAccountScores(item.username, verdict);
-			saveBotCache(item.username, merged);
+			const stable = saveBotCache(item.username, merged);
 			pendingBotRequests.delete(item.username);
-			item.resolve(merged);
+			item.resolve(stable || getCachedVerdict(item.username) || merged);
 		} else {
 			const fallback = createFallbackVerdict(
 				verdict ? "server_unavailable" : "retry_failed",
@@ -950,6 +1153,8 @@ if (typeof window !== "undefined") {
 		getAccountScore,
 		getAccountPriorVerdict,
 		isUnknownVerdict,
+		stabilizeAccountVerdict,
+		syncAccountUI,
 		BACKEND_URL,
 		isCircuitOpen,
 		pendingCount: () => pendingBotRequests.size,
