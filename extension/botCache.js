@@ -8,9 +8,12 @@
 const BOT_CACHE_KEY = "bot_verdict_cache";
 const BOT_ACCOUNT_KEY = "bot_account_scores";
 const BOT_OVERRIDES_KEY = "bot_overrides";
+// Scored strangers (AI/local) — rolling TTLs
 const BOT_CACHE_EXPIRY_HIGH_CONF_DAYS = 30;
 const BOT_CACHE_EXPIRY_MED_CONF_DAYS = 14;
 const BOT_CACHE_EXPIRY_LOW_CONF_DAYS = 7;
+// Pinned judgments must survive restarts and must never force recompute
+const BOT_CACHE_EXPIRY_PINNED_DAYS = 3650; // ~10 years — overrides, whitelist, follows
 const BOT_CACHE_SAVE_INTERVAL = 5000;
 const BOT_BATCH_SIZE = 5;
 const BOT_BATCH_DELAY = 500;
@@ -67,13 +70,22 @@ async function loadBotCache() {
 		if (result[BOT_CACHE_KEY]) {
 			let purged = false;
 			for (const [username, data] of Object.entries(result[BOT_CACHE_KEY])) {
-				if (data?.expiry && data.expiry > now && !isUnknownVerdict(data)) {
-					botVerdictCache.set(username.toLowerCase(), data);
-				} else if (data && isUnknownVerdict(data)) {
+				if (!data || isUnknownVerdict(data)) {
 					purged = true;
+					continue;
+				}
+				// Pinned (follow / your Human mark) always reload — never drop on TTL
+				if (isHardPinnedVerdict(data)) {
+					botVerdictCache.set(username.toLowerCase(), data);
+					continue;
+				}
+				if (data.expiry && data.expiry > now) {
+					botVerdictCache.set(username.toLowerCase(), data);
+				} else {
+					purged = true; // expired stranger score
 				}
 			}
-			// Rewrite storage without legacy conf=0 "human" poison
+			// Rewrite storage without legacy conf=0 poison / expired junk
 			if (purged) {
 				pendingCacheSave = setTimeout(async () => {
 					await persistBotCache();
@@ -135,6 +147,7 @@ function clamp01(n, lo = 0, hi = 1) {
 
 function isHardPinnedVerdict(verdict) {
 	if (!verdict) return false;
+	if (verdict.pinned === true) return true;
 	if (verdict.source === "trust" || verdict.source === "override") return true;
 	const tier = verdict.trustTier;
 	return (
@@ -145,6 +158,88 @@ function isHardPinnedVerdict(verdict) {
 		tier === "override_bot" ||
 		tier === "override_slop"
 	);
+}
+
+/**
+ * Accounts we must never send to AI / local recompute.
+ * - Your Human/Bot/Slop mark (override)
+ * - Whitelist
+ * - You follow / mutual (live set or cached trust chip)
+ */
+function isPinnedAccount(username) {
+	const key = String(username || "").toLowerCase();
+	if (!key) return false;
+	if (getOverride(key)) return true;
+	if (isWhitelisted(key)) return true;
+	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
+	if (L?.isFollowedByUser?.(key) || L?.isMutualWithUser?.(key)) return true;
+	const cached = botVerdictCache.get(key);
+	if (cached && isHardPinnedVerdict(cached) && !isUnknownVerdict(cached)) {
+		// Pinned entries ignore expiry for "do we recompute?" decisions
+		return true;
+	}
+	return false;
+}
+
+/**
+ * Pure lookup: verdict we already know for this @user.
+ * Used as the first step of tweet processing — paint only, no network, no local AI.
+ * Returns null only when we still need to classify.
+ */
+function getKnownVerdict(username) {
+	const key = String(username || "").toLowerCase();
+	if (!key) return null;
+	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
+
+	// 1. Explicit mark (Human / Bot / Slop) — permanent
+	const overrideV = getOverrideVerdict(key);
+	if (overrideV) return { ...overrideV, pinned: true };
+
+	// 2. Whitelist
+	if (isWhitelisted(key)) {
+		return {
+			isBot: false,
+			isSlop: false,
+			confidence: 1,
+			category: "genuine",
+			reason: "You marked this account as human",
+			signals: ["whitelist"],
+			source: "trust",
+			trustTier: "whitelist",
+			pinned: true,
+		};
+	}
+
+	// 3. Live follow / mutual
+	const liveTier = L?.getTrustTier?.(key);
+	if (L?.isHardTrustTier?.(liveTier)) {
+		const v =
+			L.createTrustVerdict?.(key, liveTier) || {
+				isBot: false,
+				isSlop: false,
+				confidence: 1,
+				category: "genuine",
+				reason: "You follow this account (hard trust — not scored)",
+				signals: ["user_follows", "hard_trust"],
+				source: "trust",
+				trustTier: liveTier,
+			};
+		return { ...v, pinned: true };
+	}
+
+	// 4. Durable cache (including expired pinned — never recompute marks/follows)
+	const cached = botVerdictCache.get(key);
+	if (cached && !isUnknownVerdict(cached)) {
+		if (isHardPinnedVerdict(cached)) {
+			return { ...cached, pinned: true };
+		}
+		// Non-pinned scored accounts: honor TTL
+		if (cached.expiry && cached.expiry > Date.now()) {
+			return cached;
+		}
+	}
+
+	return null;
 }
 
 /**
@@ -277,6 +372,9 @@ function stabilizeAccountVerdict(username, seed) {
 /**
  * Persist + stabilize. Returns the **account-level** verdict that should be shown
  * on every post by this user (or null if skipped).
+ *
+ * Pinned (override / whitelist / follow) → ~10y TTL, never overwritten by AI/local.
+ * Scored strangers → shorter TTL, account-stable confidence.
  */
 function saveBotCache(username, verdict) {
 	const key = String(username || "").toLowerCase();
@@ -289,11 +387,26 @@ function saveBotCache(username, verdict) {
 	const existing = botVerdictCache.get(key);
 	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
 	const liveTier = L?.getTrustTier?.(key);
+
+	// Pinned account already stored — refuse demotions / AI noise
+	if (
+		existing &&
+		isHardPinnedVerdict(existing) &&
+		!isHardPinnedVerdict(verdict) &&
+		!existing.isBot
+	) {
+		return existing;
+	}
 	if (
 		L?.isHardTrustTier?.(liveTier) &&
 		(verdict.isBot || verdict.isSlop || verdict.source === "local")
 	) {
-		return existing || null;
+		return (
+			existing ||
+			(L.createTrustVerdict?.(key, liveTier)
+				? { ...L.createTrustVerdict(key, liveTier), pinned: true }
+				: null)
+		);
 	}
 	if (
 		existing &&
@@ -307,35 +420,55 @@ function saveBotCache(username, verdict) {
 		return existing;
 	}
 
-	// Absorb this reply into rolling account reputation
-	if (!isHardPinnedVerdict(verdict)) {
+	const incomingPinned = isHardPinnedVerdict(verdict);
+
+	// Skip rewrite thrash: same pinned class already durable
+	if (
+		incomingPinned &&
+		existing &&
+		isHardPinnedVerdict(existing) &&
+		Boolean(existing.isBot) === Boolean(verdict.isBot) &&
+		Boolean(existing.isSlop) === Boolean(verdict.isSlop) &&
+		existing.trustTier === (verdict.trustTier || existing.trustTier) &&
+		existing.expiry &&
+		existing.expiry > now + 30 * 24 * 60 * 60 * 1000
+	) {
+		return existing;
+	}
+
+	// Absorb this reply into rolling account reputation (not for pins)
+	if (!incomingPinned) {
 		updateAccountScore(key, verdict);
 	}
 
 	// One stable chip per account — not per post
 	const stable = stabilizeAccountVerdict(key, verdict);
+	const pinned = incomingPinned || isHardPinnedVerdict(stable);
 	const confidence = stable.confidence || 0;
 
 	let expiryDays;
-	if (confidence >= 0.75) expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
-	else if (confidence >= 0.5) expiryDays = BOT_CACHE_EXPIRY_MED_CONF_DAYS;
-	else expiryDays = BOT_CACHE_EXPIRY_LOW_CONF_DAYS;
+	if (pinned) {
+		expiryDays = BOT_CACHE_EXPIRY_PINNED_DAYS;
+	} else if (confidence >= 0.75) {
+		expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
+	} else if (confidence >= 0.5) {
+		expiryDays = BOT_CACHE_EXPIRY_MED_CONF_DAYS;
+	} else {
+		expiryDays = BOT_CACHE_EXPIRY_LOW_CONF_DAYS;
+	}
 
-	if (stable.source === "local" && confidence < 0.85) {
+	if (!pinned && stable.source === "local" && confidence < 0.85) {
 		expiryDays = Math.min(expiryDays, 3);
 	}
-	if (
-		stable.source === "trust" ||
-		stable.source === "override" ||
-		stable.source === "account"
-	) {
-		expiryDays = BOT_CACHE_EXPIRY_HIGH_CONF_DAYS;
+	if (!pinned && stable.source === "account") {
+		expiryDays = Math.max(expiryDays, BOT_CACHE_EXPIRY_HIGH_CONF_DAYS);
 	}
 
 	const expiry = now + expiryDays * 24 * 60 * 60 * 1000;
 
 	const stored = {
 		...stable,
+		pinned: pinned || undefined,
 		expiry,
 		cachedAt: now,
 	};
@@ -375,6 +508,7 @@ function normalizeVerdict(verdict) {
 		signals: Array.isArray(verdict.signals) ? verdict.signals.slice(0, 8) : [],
 		source: verdict.source || "ai",
 		trustTier: verdict.trustTier || "none",
+		pinned: Boolean(verdict.pinned) || isHardPinnedVerdict(verdict) || undefined,
 		accountScore:
 			verdict.accountScore != null ? Number(verdict.accountScore) : null,
 		replyScore: verdict.replyScore != null ? Number(verdict.replyScore) : null,
@@ -396,17 +530,25 @@ async function persistBotCache() {
 function getCachedVerdict(username) {
 	const key = String(username || "").toLowerCase();
 	const cached = botVerdictCache.get(key);
+	if (!cached) return null;
 
-	if (cached && cached.expiry && cached.expiry > Date.now()) {
-		// Drop legacy conf=0 "human" poison that was cached before this fix
-		if (isUnknownVerdict(cached)) {
-			botVerdictCache.delete(key);
-			return null;
-		}
+	// Drop legacy conf=0 "human" poison
+	if (isUnknownVerdict(cached)) {
+		botVerdictCache.delete(key);
+		return null;
+	}
+
+	// Pinned (your mark / follow trust) never expire for reads
+	if (isHardPinnedVerdict(cached)) {
 		return cached;
 	}
 
-	if (cached) botVerdictCache.delete(key);
+	if (cached.expiry && cached.expiry > Date.now()) {
+		return cached;
+	}
+
+	// Expired scored stranger — drop so we can re-evaluate later
+	botVerdictCache.delete(key);
 	return null;
 }
 
@@ -708,6 +850,7 @@ async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
  * Resolve a verdict with zero X load and minimal backend load.
  *
  * RULE STACK (first match wins — keep this short):
+ *  0. getKnownVerdict (pinned + durable cache) → NEVER recompute
  *  1. Your override (Human / Bot / Slop mark)
  *  2. Whitelist
  *  3. Hard trust: mutual > you-follow  → blue ✓/↔, NEVER "?", NEVER AI
@@ -716,15 +859,30 @@ async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
  *  6. Account prior (after enough samples)
  *  7. else → server AI
  *
- * People you follow must never look "unsure". Short replies must never demote them.
+ * People you follow / marked human must never re-enter AI or local spam filters.
  */
 function resolveLocally(username, replyData, opts = {}) {
 	const key = String(username || "").toLowerCase();
 	const L = typeof window !== "undefined" ? window.BotLegitimacy : null;
 
+	// 0. Already known (pinned or scored cache) — zero recompute
+	if (opts.allowCache !== false) {
+		const known = getKnownVerdict(key);
+		if (known) {
+			// Learn DOM/opts follow into live set without reclassifying
+			if (
+				(opts.userFollows === true || replyData?.userFollows === true) &&
+				!L?.isFollowedByUser?.(key)
+			) {
+				L?.noteYouFollow?.(key);
+			}
+			return known;
+		}
+	}
+
 	// 1. Personal override (explicit user judgment wins)
 	const overrideV = getOverrideVerdict(key);
-	if (overrideV) return overrideV;
+	if (overrideV) return { ...overrideV, pinned: true };
 
 	// 2. Whitelist
 	if (isWhitelisted(key)) {
@@ -737,6 +895,7 @@ function resolveLocally(username, replyData, opts = {}) {
 			signals: ["whitelist"],
 			source: "trust",
 			trustTier: "whitelist",
+			pinned: true,
 		};
 	}
 
@@ -772,7 +931,7 @@ function resolveLocally(username, replyData, opts = {}) {
 		if (userFollows || tier === "following" || tier === "mutual") {
 			L?.noteYouFollow?.(key);
 		}
-		return (
+		const trustV =
 			L?.createTrustVerdict?.(key, tier) || {
 				isBot: false,
 				isSlop: false,
@@ -788,35 +947,34 @@ function resolveLocally(username, replyData, opts = {}) {
 						: ["user_follows", "hard_trust"],
 				source: "trust",
 				trustTier: tier,
-			}
-		);
+			};
+		return { ...trustV, pinned: true };
 	}
 
 	// 4. Session/storage cache — always the **account** chip, not this reply's score
 	const cached = getCachedVerdict(key);
 	if (cached && opts.allowCache !== false) {
-		// Never keep a cached bot/slop if we somehow have hard-trust on the verdict already
-		if (
-			(cached.trustTier === "mutual" ||
-				cached.trustTier === "following" ||
-				cached.source === "trust") &&
-			!cached.isBot
-		) {
+		// Pinned or high-trust cache: never re-run local filters
+		if (isHardPinnedVerdict(cached) || cached.pinned) {
 			return cached;
 		}
 
-		// Class upgrades only (human → slop/bot). Absorb into account EMA, return
-		// the stabilized account verdict so two posts never show 99 vs 88.
+		// Class upgrades only for unpinned strangers (human → slop/bot).
+		// Never recompute people you already scored as solid human without new class change.
 		const local = window.BotDetection?.localClassify?.(replyData);
 		if (local && !isHardPinnedVerdict(cached)) {
 			const upgradesBot = local.isBot && !cached.isBot;
 			const upgradesSlop =
 				local.isSlop && !cached.isBot && !cached.isSlop && !local.isBot;
-			if (upgradesBot || upgradesSlop) {
-				if (L?.isHardTrustTier?.(cached.trustTier)) {
-					return cached;
-				}
-				// Fold evidence in; saveBotCache stabilizes + syncs all chips
+			// Do not demote a confident human with a weak local hit
+			const solidHuman =
+				!cached.isBot &&
+				!cached.isSlop &&
+				Number(cached.confidence) >= 0.8 &&
+				(cached.source === "ai" ||
+					cached.source === "account" ||
+					cached.source === "account_prior");
+			if ((upgradesBot || upgradesSlop) && !solidHuman) {
 				saveBotCache(key, local);
 				return getCachedVerdict(key) || cached;
 			}
@@ -837,6 +995,12 @@ function resolveLocally(username, replyData, opts = {}) {
 
 function queueForClassification(username, replyData) {
 	const key = String(username || "").toLowerCase();
+
+	// Never enqueue people we already pinned / scored
+	const known = getKnownVerdict(key);
+	if (known) {
+		return Promise.resolve(known);
+	}
 
 	// Coalesce
 	if (pendingBotRequests.has(key)) {
@@ -1097,13 +1261,26 @@ async function loadWhitelist() {
 async function addToWhitelist(username) {
 	const key = String(username || "").toLowerCase();
 	whitelistSet.add(key);
-	botVerdictCache.delete(key);
 	await setOverride(key, { forceHuman: true, forceBot: false, forceSlop: false });
+	// Durable pin so we never recompute this account
+	const verdict = getOverrideVerdict(key) || {
+		isBot: false,
+		isSlop: false,
+		confidence: 1,
+		category: "genuine",
+		reason: "You marked this account as human",
+		signals: ["whitelist", "user_override_human"],
+		source: "override",
+		trustTier: "override_human",
+		pinned: true,
+	};
+	saveBotCache(key, verdict);
 
 	try {
 		await Promise.all([
 			chrome.storage.local.set({ [WHITELIST_KEY]: Array.from(whitelistSet) }),
 			persistBotCache(),
+			persistOverrides(),
 		]);
 	} catch {
 		/* storage error */
@@ -1164,6 +1341,9 @@ if (typeof window !== "undefined") {
 		loadBotCache,
 		loadWhitelist,
 		getCachedVerdict,
+		getKnownVerdict,
+		isPinnedAccount,
+		isHardPinnedVerdict,
 		saveBotCache,
 		persistBotCache,
 		queueForClassification,

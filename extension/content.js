@@ -949,6 +949,32 @@ function dimThresholdForSensitivity() {
   return Math.max(0.5, Math.min(0.95, 1.05 - s * 0.1));
 }
 
+function statusFromVerdict(verdict) {
+  if (!verdict) return 'human';
+  if (verdict.isBot) return 'bot';
+  if (verdict.isSlop) return 'slop';
+  return 'human';
+}
+
+/**
+ * Paint a known account and stop. No AI, no passive fetch, no local spam filters.
+ */
+function applyKnownAndStop(el, username, verdict) {
+  if (!verdict) return false;
+  // Persist pins once so restarts keep skipping recompute
+  if (
+    window.BotCache?.isHardPinnedVerdict?.(verdict) ||
+    verdict.pinned ||
+    !verdict.expiry
+  ) {
+    window.BotCache?.saveBotCache?.(username, verdict);
+  }
+  window.BotUI?.applyBotUI?.(el, verdict, username);
+  el.dataset.botProcessed = statusFromVerdict(verdict);
+  el.dataset.botUsername = String(username).toLowerCase();
+  return true;
+}
+
 async function processBotDetection(el) {
   if (!botDetectionEnabled) return;
   const status = el.dataset.botProcessed;
@@ -962,7 +988,37 @@ async function processBotDetection(el) {
     return;
   }
 
-  // Extract DOM data first (cheap)
+  // ── FAST PATH: already known (your mark / follow / durable cache) ──
+  // Never recompute people you follow or marked human.
+  const known = window.BotCache?.getKnownVerdict?.(username);
+  if (known) {
+    applyKnownAndStop(el, username, known);
+    return;
+  }
+
+  // Cheap DOM follow check before any heavier work
+  if (window.BotDetection?.detectYouFollowFromDom?.(el)) {
+    window.BotLegitimacy?.noteYouFollow?.(username);
+    const trustV =
+      window.BotLegitimacy?.createTrustVerdict?.(username, 'following') ||
+      window.BotCache?.getKnownVerdict?.(username);
+    if (trustV) {
+      applyKnownAndStop(el, username, trustV);
+      return;
+    }
+  }
+
+  // Live follow set (may have loaded after first paint)
+  if (window.BotLegitimacy?.isFollowedByUser?.(username)) {
+    const tier = window.BotLegitimacy.getTrustTier?.(username) || 'following';
+    const trustV = window.BotLegitimacy.createTrustVerdict?.(username, tier);
+    if (trustV) {
+      applyKnownAndStop(el, username, trustV);
+      return;
+    }
+  }
+
+  // Extract DOM data for strangers only
   const replyData = extractReplyData(el, username);
   if (!replyData) {
     el.dataset.botProcessed = 'skip';
@@ -970,7 +1026,6 @@ async function processBotDetection(el) {
   }
 
   // Trust signals — multiple sources so people you follow never show "?"
-  // 1) Following list / live set  2) DOM unfollow button  3) passive GraphQL
   const followsFromList = Boolean(window.BotLegitimacy?.isFollowedByUser?.(username));
   const followsFromDom = Boolean(
     replyData.userFollows ||
@@ -988,14 +1043,28 @@ async function processBotDetection(el) {
   replyData.trustTier = trustTier;
   replyData.mutualCount = isMutual ? 1 : 0;
 
-  // Rule stack (offline first): override → whitelist → mutual/follow → cache → local → server
-  // Hard-trust never demoted by short comments or AI failure.
+  // If we just learned follow, pin and stop — no AI
+  if (userFollows || trustTier === 'mutual' || trustTier === 'following') {
+    const trustV =
+      window.BotLegitimacy?.createTrustVerdict?.(username, trustTier === 'mutual' ? 'mutual' : 'following');
+    if (trustV) {
+      applyKnownAndStop(el, username, trustV);
+      return;
+    }
+  }
+
+  // Offline resolve for strangers (cache / local templates / prior)
   const local = window.BotCache?.resolveLocally?.(username, replyData, {
     userFollows,
     isMutual,
     trustTier,
   });
   if (local) {
+    // Pinned must never continue to AI
+    if (window.BotCache?.isHardPinnedVerdict?.(local) || local.pinned) {
+      applyKnownAndStop(el, username, local);
+      return;
+    }
     let display = local;
     if (local.source !== 'cache' && !local.expiry) {
       display = window.BotCache?.saveBotCache?.(username, local) || local;
@@ -1003,7 +1072,7 @@ async function processBotDetection(el) {
       display = window.BotCache?.getCachedVerdict?.(username) || local;
     }
     window.BotUI?.applyBotUI?.(el, display, username);
-    el.dataset.botProcessed = display.isBot ? 'bot' : (display.isSlop ? 'slop' : 'human');
+    el.dataset.botProcessed = statusFromVerdict(display);
     el.dataset.botUsername = username.toLowerCase();
     return;
   }
@@ -1036,10 +1105,14 @@ async function processBotDetection(el) {
   if (window.BotLegitimacy?.isHardTrustTier?.(window.BotLegitimacy.getTrustTier?.(username))) {
     const tier = window.BotLegitimacy.getTrustTier(username);
     const trustV = window.BotLegitimacy.createTrustVerdict(username, tier);
-    window.BotCache?.saveBotCache?.(username, trustV);
-    window.BotUI?.applyBotUI?.(el, trustV, username);
-    el.dataset.botProcessed = 'human';
-    el.dataset.botUsername = username.toLowerCase();
+    applyKnownAndStop(el, username, trustV);
+    return;
+  }
+
+  // Bail if we learned pin while waiting on passive
+  const knownAfterPassive = window.BotCache?.getKnownVerdict?.(username);
+  if (knownAfterPassive) {
+    applyKnownAndStop(el, username, knownAfterPassive);
     return;
   }
 

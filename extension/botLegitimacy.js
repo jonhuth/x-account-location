@@ -293,6 +293,14 @@ function noteYouFollow(username) {
 	userFollowingSet.add(key);
 	// Persist growth so restarts still hard-trust (progressive, may be incomplete)
 	saveFollowingCache(userFollowingSet, followingComplete).catch(() => {});
+	// Also pin a durable trust verdict in bot cache — skip AI forever for this @user
+	try {
+		const tier = getTrustTier(key);
+		const verdict = createTrustVerdict(key, tier);
+		window.BotCache?.saveBotCache?.(key, { ...verdict, pinned: true });
+	} catch {
+		/* BotCache may not be loaded yet */
+	}
 	emitTrustUpdated(key, getTrustTier(key));
 	return true;
 }

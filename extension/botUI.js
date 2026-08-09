@@ -1115,19 +1115,21 @@ function addQuickActions(container, username, forceShow = false) {
   humanBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     e.preventDefault();
+    // addToWhitelist also setOverride + durable pin — never recompute this account
     await window.BotCache?.addToWhitelist?.(resolvedUsername);
-    const verdict = {
-      isBot: false,
-      isSlop: false,
-      confidence: 0.99,
-      category: 'genuine',
-      reason: 'You marked this account as human',
-      signals: ['user_override_human'],
-      source: 'override',
-      trustTier: 'override_human',
-    };
-    window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
-    showToast(`@${resolvedUsername} marked human`);
+    const verdict =
+      window.BotCache?.getKnownVerdict?.(resolvedUsername) || {
+        isBot: false,
+        isSlop: false,
+        confidence: 1,
+        category: 'genuine',
+        reason: 'You marked this account as human',
+        signals: ['user_override_human'],
+        source: 'override',
+        trustTier: 'override_human',
+        pinned: true,
+      };
+    showToast(`@${resolvedUsername} marked human — saved`);
     applyOverrideEverywhere(resolvedUsername, verdict, 'whitelisted');
   });
 
@@ -1145,8 +1147,8 @@ function addQuickActions(container, username, forceShow = false) {
       forceSlop: false,
     });
     const verdict = window.BotCache?.getOverrideVerdict?.(resolvedUsername);
-    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
-    showToast(`@${resolvedUsername} marked bot`);
+    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, { ...verdict, pinned: true });
+    showToast(`@${resolvedUsername} marked bot — saved`);
     applyOverrideEverywhere(resolvedUsername, verdict, 'bot');
   });
 
@@ -1165,8 +1167,8 @@ function addQuickActions(container, username, forceShow = false) {
       forceHuman: false,
     });
     const verdict = window.BotCache?.getOverrideVerdict?.(resolvedUsername);
-    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, verdict);
-    showToast(`@${resolvedUsername} marked slop`);
+    if (verdict) window.BotCache?.saveBotCache?.(resolvedUsername, { ...verdict, pinned: true });
+    showToast(`@${resolvedUsername} marked slop — saved`);
     applyOverrideEverywhere(resolvedUsername, verdict, 'slop');
   });
 
