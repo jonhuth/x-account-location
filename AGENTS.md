@@ -129,14 +129,17 @@ try {
 3. After changes: refresh icon on extension card
 4. Console: `window.debugShowTweets()` or `window.forceReprocessBots()`
 
-### Safari (macOS host with Xcode)
+### Safari (macOS host with Xcode / agent CLI)
 ```bash
-./safari/convert.sh
-open safari/Xcode/*.xcodeproj
+export DEVELOPMENT_TEAM=XXXXXXXXXX   # once in shell profile
+./safari/doctor.sh
+./safari/build.sh ios-sim            # convert + xcodebuild
+./safari/run-sim.sh                  # simctl install/launch
+# human once: Settings → Safari → Extensions → enable + allow x.com
 ```
-Full device + Simulator steps: **`safari/TESTING.md`**.
+Hands-off map: **`safari/CLI.md`**. GUI walkthrough: **`safari/TESTING.md`**.
 
-Linux agents cannot run the converter or Xcode — prepare sources here; package on a Mac.
+Linux agents cannot run the converter or Xcode — edit `extension/` here; SSH to Mac for build/sim.
 
 ### Backend
 ```bash

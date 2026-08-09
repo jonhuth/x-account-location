@@ -158,6 +158,18 @@ Review: privacy nutrition labels (network to Railway + X), no tracking, account 
 
 ---
 
+## Hands-off / agent CLI (prefer this on a Mac)
+
+See **[CLI.md](./CLI.md)** for the full automated vs human split.
+
+```bash
+export DEVELOPMENT_TEAM=XXXXXXXXXX   # once
+./safari/doctor.sh
+./safari/build.sh ios-sim            # convert + xcodebuild
+./safari/run-sim.sh                  # simctl install/launch
+# then once: Settings → Safari → Extensions → enable + allow x.com
+```
+
 ## Linux agents / this machine
 
-`homebox` is Linux — you **cannot** run `xcrun safari-web-extension-converter` or Xcode here. Ship the `extension/` sources + `safari/convert.sh` from any machine; run convert + TestFlight on a Mac (todo: “Mac + AI CLIs + iOS/macOS dev environment”).
+`homebox` is Linux — you **cannot** run `xcrun safari-web-extension-converter` or Xcode here. Ship the `extension/` sources + `safari/*.sh` from any machine; SSH/Tailscale to a Mac and run `./safari/build.sh` / `./safari/run-sim.sh` there.
