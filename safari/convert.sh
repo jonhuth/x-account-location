@@ -49,8 +49,10 @@ xcrun safari-web-extension-converter "${EXT_DIR}" \
   --no-prompt
 
 echo
-echo "Done. Next:"
-echo "  1. open ${OUT_DIR}/*.xcodeproj  (or the generated .xcworkspace)"
-echo "  2. Select your Team (Signing & Capabilities) for the app + extension targets"
-echo "  3. See safari/TESTING.md for macOS + iOS run steps"
-echo "  4. Prefer running on a device with X in Safari (not the X app)"
+echo "Done. Hands-off next (Mac):"
+echo "  export DEVELOPMENT_TEAM=XXXXXXXXXX   # once in shell profile"
+echo "  ./safari/doctor.sh"
+echo "  ./safari/build.sh ios-sim            # or: macos | all"
+echo "  ./safari/run-sim.sh                  # sim install/launch"
+echo "Still human once: Safari Settings → Extensions → enable + allow x.com"
+echo "Docs: safari/CLI.md · safari/TESTING.md"
