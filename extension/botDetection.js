@@ -6,6 +6,38 @@
 // ============================================================================
 
 /**
+ * Best-effort: does the DOM say YOU follow this account?
+ * Used as instant hard-trust so we never paint "?" on people you follow
+ * while the Following list crawl is still loading.
+ */
+function detectYouFollowFromDom(el) {
+	if (!el) return false;
+	try {
+		// Unfollow control only exists when you already follow them
+		if (el.querySelector('[data-testid$="-unfollow"]')) return true;
+		if (el.querySelector('[data-testid="userFollowIndicator"]')) return true;
+		// Profile header / card "Following" button
+		const buttons = el.querySelectorAll('button, [role="button"]');
+		for (const btn of buttons) {
+			const label = String(
+				btn.getAttribute("aria-label") || btn.textContent || "",
+			).toLowerCase();
+			// Exact-ish: "Following @x" / button text "Following" (not "Followers")
+			if (label.includes("unfollow")) return true;
+			if (
+				(label === "following" || label.startsWith("following @")) &&
+				!label.includes("followers")
+			) {
+				return true;
+			}
+		}
+		return false;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Extract reply data from a tweet DOM element.
  * Profile fields stay empty here — filled from passive pageScript cache only.
  */
@@ -42,6 +74,8 @@ function extractReplyDataFromElement(el, username) {
 			userNameContainer?.querySelector('svg[viewBox="0 0 22 22"]')
 		);
 
+		const userFollowsDom = detectYouFollowFromDom(el);
+
 		return {
 			username,
 			displayName,
@@ -56,9 +90,9 @@ function extractReplyDataFromElement(el, username) {
 			location: null,
 			secondsAfterOriginal: 0,
 			heuristicScore: 0,
-			userFollows: false,
+			userFollows: userFollowsDom,
 			mutualCount: 0,
-			trustTier: "none",
+			trustTier: userFollowsDom ? "following" : "none",
 			contentHash: hashText(replyText),
 		};
 	} catch {
@@ -850,6 +884,7 @@ if (typeof window !== "undefined") {
 	window.BotDetection = {
 		extractReplyDataFromElement,
 		extractOriginalTweetText,
+		detectYouFollowFromDom,
 		localClassify,
 		classifyFollowRatio,
 		classifyThreadDuplicate,

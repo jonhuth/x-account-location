@@ -259,9 +259,42 @@ function maybeSoftRefresh() {
 // Trust queries
 // ---------------------------------------------------------------------------
 
+function emitTrustUpdated(username, trustTier) {
+	try {
+		window.dispatchEvent(
+			new CustomEvent("botTrustUpdated", {
+				detail: {
+					username: String(username || "").toLowerCase(),
+					trustTier: trustTier || getTrustTier(username),
+				},
+			}),
+		);
+	} catch {
+		/* ignore */
+	}
+}
+
 function isFollowedByUser(username) {
 	if (!userFollowingSet) return false;
 	return userFollowingSet.has(String(username || "").toLowerCase());
+}
+
+/**
+ * Record that YOU follow `username` (from GraphQL legacy.following, DOM, or
+ * Following crawl). Critical: timeline often has this field — we must not wait
+ * for a full Following API crawl or people you follow look like strangers (?).
+ */
+function noteYouFollow(username) {
+	const key = String(username || "").toLowerCase();
+	if (!key) return false;
+	if (!userFollowingSet) userFollowingSet = new Set();
+	const had = userFollowingSet.has(key);
+	if (had) return false;
+	userFollowingSet.add(key);
+	// Persist growth so restarts still hard-trust (progressive, may be incomplete)
+	saveFollowingCache(userFollowingSet, followingComplete).catch(() => {});
+	emitTrustUpdated(key, getTrustTier(key));
+	return true;
 }
 
 /**
@@ -273,16 +306,8 @@ function noteFollowedBy(username) {
 	if (!key) return false;
 	const had = followedBySet.has(key);
 	followedBySet.add(key);
-	if (!had && isFollowedByUser(key)) {
-		try {
-			window.dispatchEvent(
-				new CustomEvent("botTrustUpdated", {
-					detail: { username: key, trustTier: "mutual" },
-				}),
-			);
-		} catch {
-			/* ignore */
-		}
+	if (!had) {
+		emitTrustUpdated(key, getTrustTier(key));
 	}
 	return !had;
 }
@@ -343,18 +368,26 @@ async function getUserContext(username) {
 }
 
 /**
- * Hard-trust verdict for mutual / following — no server, no X API.
+ * Hard-trust verdict for mutual / following — no server, no X API, never "?".
  * Short engagement replies must never replace this.
+ * Confidence is fixed high (not a fake per-post score) — chip shows ✓ / ↔ only.
  */
 function createTrustVerdict(username, tier) {
-	const t = tier === "mutual" || isMutualWithUser(username) ? "mutual" : "following";
+	const resolved =
+		tier === "mutual" || tier === "following"
+			? tier
+			: isMutualWithUser(username)
+				? "mutual"
+				: "following";
+	const t =
+		resolved === "mutual" || isMutualWithUser(username) ? "mutual" : "following";
 	if (t === "mutual") {
 		return {
 			isBot: false,
 			isSlop: false,
-			confidence: 0.99,
+			confidence: 1,
 			category: "genuine",
-			reason: "Mutual follow — highest trust signal",
+			reason: "Mutual — you follow each other (hard trust)",
 			signals: ["mutual_follow", "user_follows", "followed_by", "hard_trust"],
 			source: "trust",
 			trustTier: "mutual",
@@ -365,9 +398,9 @@ function createTrustVerdict(username, tier) {
 	return {
 		isBot: false,
 		isSlop: false,
-		confidence: 0.96,
+		confidence: 1,
 		category: "genuine",
-		reason: "Account you follow",
+		reason: "You follow this account (hard trust — not scored)",
 		signals: ["user_follows", "hard_trust"],
 		source: "trust",
 		trustTier: "following",
@@ -398,6 +431,7 @@ if (typeof window !== "undefined") {
 		isFollowedByUser,
 		isFollowedByThem,
 		isMutualWithUser,
+		noteYouFollow,
 		noteFollowedBy,
 		getMutualFollowCount,
 		getTrustTier,
