@@ -28,7 +28,7 @@
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
-    "https://x-bot-detector-production.up.railway.app/*"
+    "http://nas.tail5becd.ts.net:3004/*"
   ],
   "content_scripts": [
     {

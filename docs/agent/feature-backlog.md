@@ -14,7 +14,7 @@ Parked product ideas — not scheduled. Pick when ROI is clear.
 
 ## Mute / block
 
-- [ ] **Shared mute packs** — optional “crypto farm starter” packs via Railway (personal default)
+- [ ] **Shared mute packs** — optional “crypto farm starter” packs via nas backend (personal default)
 - [ ] **One-click mute author** from badge actions → mute list + optional X settings
 - [ ] **Better Apply-to-X** for muted keywords (more reliable than best-effort inject)
 
@@ -31,4 +31,4 @@ Parked product ideas — not scheduled. Pick when ROI is clear.
 
 ## Ops
 
-- [ ] Durable Railway verdict cache (Postgres) only if multi-device shared scores matter
+- [ ] Durable verdict cache (Postgres) only if multi-device shared scores matter

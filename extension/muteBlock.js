@@ -3,8 +3,7 @@
 // Apply-to-X helpers run via popup scripting on settings pages (desktop).
 
 const MUTE_BLOCK_KEY = "mute_block_lists";
-const MUTE_BLOCK_BACKEND =
-	"https://x-bot-detector-production.up.railway.app";
+const MUTE_BLOCK_BACKEND = "http://nas.tail5becd.ts.net:3004";
 
 /** @typedef {{ id: string, term: string, source?: string, addedAt?: number }} MuteWord */
 /** @typedef {{ id: string, username: string, source?: string, addedAt?: number }} MuteAccount */
@@ -330,7 +329,7 @@ async function expandStems(wordIds = null) {
 }
 
 /**
- * Local + optional Railway AI suggestions for a seed term.
+ * Local + optional backend AI suggestions for a seed term.
  */
 async function suggestFromSeed(seed, { useAi = true, limit = 16 } = {}) {
 	const s = String(seed || "").trim();

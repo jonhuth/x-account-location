@@ -109,7 +109,7 @@ Design for this: first-run copy in the containing app should say **Open Safari �
 | Feature | macOS Safari | iOS Safari | Notes |
 |---------|--------------|------------|--------|
 | Location flags | Primary | **MVP** | content script + `pageScript.js` injection |
-| Bot chips / backend classify | Yes if network OK | Yes if network OK | Needs Railway backend; not flags MVP |
+| Bot chips / backend classify | Yes if network OK | Yes if network OK | Needs nas backend (`http://nas.tail5becd.ts.net:3004`); not flags MVP |
 | Popup toggles / storage | Yes | Yes (toolbar extension popup) | `chrome.storage` works in Safari WE |
 | Clean Interests (`scripting.executeScript`) | Yes | Limited / may fail | Power-user desktop tool; not iOS MVP |
 | Service worker background | N/A today | N/A today | This extension is content-script driven |
@@ -142,11 +142,11 @@ From product notes: Safari is the **paid** surface; Chrome free culture is optio
 |-------|----------|
 | Paid app ($3–15) | Simple for flags-only MVP |
 | Free + IAP Pro | Unlock bot AI / higher limits |
-| Free ext + backend sub | AI classification via existing Railway API |
+| Free ext + backend sub | AI classification via nas backend |
 
 IAP needs **StoreKit in the containing app** + App Group / `nativeMessaging` / shared defaults to tell the web extension “pro unlocked.” Leave that for a follow-up once flags ship on TestFlight.
 
-Review: privacy nutrition labels (network to Railway + X), no tracking, account data only for classification.
+Review: privacy nutrition labels (network to nas backend + X), no tracking, account data only for classification.
 
 ---
 
@@ -157,7 +157,7 @@ Review: privacy nutrition labels (network to Railway + X), no tracking, account 
 | No flags, no errors | Site permission + extension enabled |
 | `pageScript` 404 | `web_accessible_resources` + rebuild Resources |
 | Storage never persists | Fixed in 2.2: missing `getBytesInUse` no longer blocks writes |
-| Bot API fails on device | ATS / HTTPS to Railway; host_permissions include backend |
+| Bot API fails on device | ATS / HTTPS; host_permissions include nas backend |
 | Works on Mac, not iPhone | Re-enable extension after install; use Safari not X app |
 | Converter missing | Full Xcode, not only CLT; `xcode-select -s /Applications/Xcode.app/...` |
 

@@ -152,12 +152,10 @@ bun run lint:fix # Biome
 Environment: `ANTHROPIC_API_KEY=sk-ant-...`
 
 ### Deployment
-```bash
-cd backend
-railway up
-```
 
-URL: `https://x-bot-detector-production.up.railway.app`
+Docker on **nas** (`x-account-backend`), port 3004. Railway retired 2026-08-13.
+
+URL: `http://nas.tail5becd.ts.net:3004`
 
 ## Debugging
 

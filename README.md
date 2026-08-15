@@ -17,7 +17,7 @@ Shared code is a Manifest V3 WebExtension under [`extension/`](./extension/).
 
 ### Bot Detection
 - Client-first resolution (whitelist, follow trust, cache, local filters)
-- Optional Claude Haiku classification via Railway backend
+- Optional Claude Haiku classification via the nas backend
 - Badges, dimming, quick actions
 
 ### Clean Interests
@@ -58,7 +58,7 @@ bun run dev      # :3000
 ```
 
 Env: `ANTHROPIC_API_KEY=sk-ant-...`  
-Production: `https://x-bot-detector-production.up.railway.app`
+Production: `http://nas.tail5becd.ts.net:3004` (Docker on nas; Railway retired 2026-08-13)
 
 ## Repo layout
 
