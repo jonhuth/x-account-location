@@ -1,38 +1,33 @@
-# Sift
+# Spam Filter for X
 
-Cut noise on X. Hide farm accounts, spam countries, and distracting chrome. Everything stays on this device.
+Hide bots, spam countries, and clutter on X. All on this device.
 
-- **Safari (iOS + macOS)** — product surface (paid App Store / TestFlight)
-- **Chrome** — fast R&D (load unpacked)
+- **Safari (iOS + macOS)** — product (App Store / TestFlight)
+- **Chrome** — load unpacked from `extension/` for R&D
 
-This is an x.com-only SNR tool. It is **not** [Desloppify](https://github.com/jonhuth/desloppify) (all-web slop). Shared MV3 sources live in [`extension/`](./extension/).
+x.com only. Not Desloppify (all-web slop).
 
 ## What it does
 
-- **Hide farm / bot accounts** — local profile gates (extreme follow-farm, new shells, look-alike reply clusters). People you follow are never scored. No AI backend in v1.
-- **Hide countries** — tap a flag, or pick from the popup. For countries that flood the feed.
-- **X chrome** — per-view toggles (For you, Explore, trends, Who to follow, promoted, Grok, Communities, Premium, Topics). Saved in `chrome.storage.local`. Calm-home preset if you want one tap.
+- Hide farm / bot accounts (local signals; people you follow stay)
+- Hide posts from countries that flood the feed
+- Hide X chrome (For you, Explore, trends, Who to follow, ads, …) — saved locally
 
-## Install — Chrome
+## Chrome
 
-1. `chrome://extensions/` → Developer mode → **Load unpacked**
-2. Select **`extension/`**
-3. Open x.com
+`chrome://extensions` → Load unpacked → `extension/`
 
-## Install — Safari
-
-Mac with Xcode:
+## Safari
 
 ```bash
-APP_NAME=Sift BUNDLE_ID=com.aevum.sift ./safari/convert.sh
-open safari/Xcode/*.xcodeproj
+APP_NAME="Spam Filter for X" BUNDLE_ID=com.aevum.spamfilter ./safari/convert.sh
 ```
 
-Use **Safari → x.com**, not the X app. See [safari/TESTING.md](./safari/TESTING.md) and [docs/agent/app-store-ship.md](./docs/agent/app-store-ship.md).
+Use Safari → x.com, not the X app. [safari/TESTING.md](./safari/TESTING.md) · [docs/agent/app-store-ship.md](./docs/agent/app-store-ship.md)
 
 ## Privacy
 
-[docs/privacy.md](./docs/privacy.md). No Sift server. Location comes from your X session on the page.
+[docs/privacy.md](./docs/privacy.md)
 
 ## License
 

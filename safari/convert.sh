@@ -4,15 +4,15 @@
 #
 # Usage:
 #   ./safari/convert.sh
-#   BUNDLE_ID=com.aevum.sift APP_NAME="Sift" ./safari/convert.sh
+#   BUNDLE_ID=com.aevum.spamfilter APP_NAME="Spam Filter for X" ./safari/convert.sh
 #
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EXT_DIR="${ROOT}/extension"
 OUT_DIR="${ROOT}/safari/Xcode"
-APP_NAME="${APP_NAME:-Sift}"
-BUNDLE_ID="${BUNDLE_ID:-com.aevum.sift}"
+APP_NAME="${APP_NAME:-Spam Filter for X}"
+BUNDLE_ID="${BUNDLE_ID:-com.aevum.spamfilter}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "error: safari-web-extension-converter only runs on macOS (this host is $(uname -s))." >&2

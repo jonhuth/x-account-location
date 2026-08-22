@@ -17,8 +17,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-APP_NAME="${APP_NAME:-Sift}"
-BUNDLE_ID="${BUNDLE_ID:-com.aevum.sift}"
+APP_NAME="${APP_NAME:-Spam Filter for X}"
+BUNDLE_ID="${BUNDLE_ID:-com.aevum.spamfilter}"
 IOS_SIM_NAME="${IOS_SIM_NAME:-}"
 
 # Ensure built

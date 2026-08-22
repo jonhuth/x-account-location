@@ -6,8 +6,8 @@ const CF = window.CountryFilter;
 const FM = window.FocusMode;
 
 if (!CF || !FM) {
-  document.body.textContent = "Sift failed to load. Reload the extension.";
-  throw new Error("Sift popup missing CountryFilter or FocusMode");
+  document.body.textContent = "Spam Filter failed to load. Reload the extension.";
+  throw new Error("Spam Filter popup missing CountryFilter or FocusMode");
 }
 
 let statsState = {};
@@ -264,5 +264,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 initPopup().catch(() => {
-  document.getElementById('country-status').textContent = 'Could not load settings. Reopen Sift.';
+  document.getElementById('country-status').textContent = 'Could not load settings. Reopen Spam Filter.';
 });

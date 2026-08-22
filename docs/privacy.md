@@ -1,10 +1,10 @@
-# Sift privacy policy
+# Spam Filter for X privacy policy
 
-Sift is a Safari and Chrome extension for x.com. It hides farm accounts, posts from countries you choose, and distracting X chrome.
+Spam Filter for X is a Safari and Chrome extension for x.com. It hides farm accounts, posts from countries you choose, and distracting X chrome.
 
 ## Data we collect
 
-We collect **nothing**. There is no Sift account, no analytics SDK, and no Sift server in this version.
+We collect **nothing**. There is no Spam Filter for X account, no analytics SDK, and no Spam Filter for X server in this version.
 
 ## What stays on your device
 
@@ -14,7 +14,7 @@ We collect **nothing**. There is no Sift account, no analytics SDK, and no Sift 
 
 ## What we do not do
 
-- We do not upload usernames, locations, or posts to a Sift backend.
+- We do not upload usernames, locations, or posts to a Spam Filter for X backend.
 - We do not sell data.
 - We do not track you across sites. Host access is limited to x.com and twitter.com.
 

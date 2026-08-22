@@ -1,6 +1,6 @@
-# Sift - AGENTS.md
+# Spam Filter for X - AGENTS.md
 
-Sift is an x.com Safari/Chrome extension that cuts noise: hide farm accounts, hide spam countries, and persist chrome declutter on-device.
+Spam Filter for X is an x.com Safari/Chrome extension that cuts noise: hide farm accounts, hide spam countries, and persist chrome declutter on-device.
 
 **Surface strategy:** Safari on iOS is the paid product. Chrome is the load-unpacked R&D loop. Keep X in Safari, not the native X app.
 
@@ -16,7 +16,7 @@ Sift is an x.com Safari/Chrome extension that cuts noise: hide farm accounts, hi
 ```text
 x-account-location/
 ├── extension/             # Shared MV3 WebExtension source
-│   ├── manifest.json      # Sift 3.0.0
+│   ├── manifest.json      # Spam Filter for X 3.0.0
 │   ├── popup.html/js      # Location first, country hide, Calm home
 │   ├── content.js         # Location and timeline UI coordinator
 │   ├── pageScript.js      # X AboutAccountQuery in page context
@@ -104,7 +104,7 @@ export DEVELOPMENT_TEAM=XXXXXXXXXX
 ./safari/run-sim.sh
 ```
 
-Human setup remains: enable Sift in Safari settings and allow x.com. See `safari/TESTING.md` and `docs/agent/app-store-ship.md`.
+Human setup remains: enable Spam Filter for X in Safari settings and allow x.com. See `safari/TESTING.md` and `docs/agent/app-store-ship.md`.
 
 ## MVP checks
 
