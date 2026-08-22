@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Flagline</title>
+  <title>Sift</title>
   <style>
     :root {
       --bg: #ffffff;
@@ -115,6 +115,7 @@
     }
 
     .row-label { font-weight: 600; }
+    .section .row + .row { margin-top: 6px; }
     .switch {
       position: relative;
       width: 44px;
@@ -213,47 +214,40 @@
 </head>
 <body>
   <header class="header">
-    <h1 class="title">Flagline</h1>
-    <p class="subtitle">Location flags and country filter for X</p>
+    <h1 class="title">Sift</h1>
+    <p class="subtitle">Cut noise on X. Stays on this device.</p>
   </header>
 
-  <nav class="tabs" role="tablist" aria-label="Flagline settings">
-    <button class="tab" id="tab-btn-location" type="button" role="tab" aria-selected="true" aria-controls="tab-location" data-tab="location">Location</button>
-    <button class="tab" id="tab-btn-calm" type="button" role="tab" aria-selected="false" aria-controls="tab-calm" data-tab="calm" tabindex="-1">Calm home</button>
+  <nav class="tabs" role="tablist" aria-label="Sift settings">
+    <button class="tab" id="tab-btn-filter" type="button" role="tab" aria-selected="true" aria-controls="tab-filter" data-tab="filter">Filter</button>
+    <button class="tab" id="tab-btn-chrome" type="button" role="tab" aria-selected="false" aria-controls="tab-chrome" data-tab="chrome" tabindex="-1">Chrome</button>
   </nav>
 
   <main>
-    <div class="tab-panel active" id="tab-location" role="tabpanel" aria-labelledby="tab-btn-location">
+    <div class="tab-panel active" id="tab-filter" role="tabpanel" aria-labelledby="tab-btn-filter">
       <div class="stack">
         <section class="onboarding" aria-labelledby="onboarding-title">
           <h2 class="section-label" id="onboarding-title">Start in Safari</h2>
           <ol class="steps">
             <li>Open Safari → x.com, not the X app.</li>
-            <li>Allow Flagline for this site.</li>
-            <li>Flags appear. Tap a flag to hide that country.</li>
+            <li>Allow Sift for this site.</li>
+            <li>Farm accounts hide. Tap a flag to hide that country.</li>
           </ol>
         </section>
 
         <section class="section">
           <div class="row">
             <div>
-              <div class="row-label" id="flags-label">Location flags</div>
-              <div class="meta" id="flags-status">Loading…</div>
+              <div class="row-label" id="bots-label">Hide farm / bot accounts</div>
+              <div class="meta">Local signals only. People you follow stay.</div>
             </div>
-            <button class="switch" id="flags-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="flags-label"></button>
-          </div>
-        </section>
-
-        <section class="section">
-          <div class="section-label">Your timeline</div>
-          <div class="counts">
-            <div class="count"><strong id="profile-count">0</strong><span>unique profiles</span></div>
-            <div class="count"><strong id="hidden-count">0</strong><span>countries hidden</span></div>
+            <button class="switch" id="bots-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="bots-label"></button>
           </div>
         </section>
 
         <section class="section">
           <div class="section-label">Hidden countries</div>
+          <p class="meta">Hide posts from countries that flood the feed with spam.</p>
           <div class="list" id="hidden-list"></div>
           <div class="input-row" style="margin-top:8px">
             <input class="input" id="country-input" type="text" autocomplete="off" placeholder="Add a country" aria-label="Country to hide">
@@ -266,22 +260,73 @@
           <div class="section-label">Seen on your timeline</div>
           <div class="chips" id="quick-countries"></div>
         </section>
+
+        <section class="section">
+          <div class="row">
+            <div>
+              <div class="row-label" id="flags-label">Show location flags</div>
+              <div class="meta" id="flags-status">Needed to pick countries from the timeline.</div>
+            </div>
+            <button class="switch" id="flags-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="flags-label"></button>
+          </div>
+        </section>
       </div>
     </div>
 
-    <div class="tab-panel" id="tab-calm" role="tabpanel" aria-labelledby="tab-btn-calm" hidden>
+    <div class="tab-panel" id="tab-chrome" role="tabpanel" aria-labelledby="tab-btn-chrome" hidden>
       <div class="stack">
         <section class="calm-card">
-          <h2 class="section-label">Calm home</h2>
-          <p>Use Following and hide noisy home-page sections. This preset is optional and off until you choose it.</p>
-          <p class="meta">Hides For you, Explore, trends, suggestions, promoted posts, upsells, Topics, and Spaces.</p>
+          <h2 class="section-label">X chrome</h2>
+          <p>Hide distracting bits. Each toggle saves on this device and sticks across sessions.</p>
         </section>
         <section class="section">
           <div class="btn-row">
-            <button class="btn" id="calm-enable" type="button">Use calm home</button>
-            <button class="btn btn--secondary" id="calm-disable" type="button">Turn off</button>
+            <button class="btn" id="calm-enable" type="button">Calm home</button>
+            <button class="btn btn--secondary" id="calm-disable" type="button">All off</button>
           </div>
           <p class="status" id="calm-status" aria-live="polite">Loading…</p>
+        </section>
+        <section class="section" id="focusToggles">
+          <div class="row">
+            <span class="row-label" id="focusForYouLabel">Hide “For you” tab</span>
+            <button type="button" class="switch" id="focusHideForYou" role="switch" aria-checked="false" aria-labelledby="focusForYouLabel" data-focus-key="hideForYouTab"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusForceLabel">Always use Following</span>
+            <button type="button" class="switch" id="focusForceFollowing" role="switch" aria-checked="false" aria-labelledby="focusForceLabel" data-focus-key="forceFollowing"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusNewsLabel">Hide News / Explore</span>
+            <button type="button" class="switch" id="focusHideNews" role="switch" aria-checked="false" aria-labelledby="focusNewsLabel" data-focus-key="hideNewsExplore"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusTrendsLabel">Hide Trends</span>
+            <button type="button" class="switch" id="focusHideTrends" role="switch" aria-checked="false" aria-labelledby="focusTrendsLabel" data-focus-key="hideTrends"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusWtfLabel">Hide Who to follow</span>
+            <button type="button" class="switch" id="focusHideWtf" role="switch" aria-checked="false" aria-labelledby="focusWtfLabel" data-focus-key="hideWhoToFollow"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusPromoLabel">Hide promoted posts</span>
+            <button type="button" class="switch" id="focusHidePromo" role="switch" aria-checked="false" aria-labelledby="focusPromoLabel" data-focus-key="hidePromoted"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusGrokLabel">Hide Grok nav</span>
+            <button type="button" class="switch" id="focusHideGrok" role="switch" aria-checked="false" aria-labelledby="focusGrokLabel" data-focus-key="hideGrokNav"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusCommLabel">Hide Communities nav</span>
+            <button type="button" class="switch" id="focusHideComm" role="switch" aria-checked="false" aria-labelledby="focusCommLabel" data-focus-key="hideCommunitiesNav"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusPremLabel">Hide Premium upsells</span>
+            <button type="button" class="switch" id="focusHidePrem" role="switch" aria-checked="false" aria-labelledby="focusPremLabel" data-focus-key="hidePremiumUpsells"></button>
+          </div>
+          <div class="row">
+            <span class="row-label" id="focusTopicsLabel">Hide Topics / Spaces</span>
+            <button type="button" class="switch" id="focusHideTopics" role="switch" aria-checked="false" aria-labelledby="focusTopicsLabel" data-focus-key="hideTopicsSpaces"></button>
+          </div>
         </section>
       </div>
     </div>

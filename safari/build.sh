@@ -12,7 +12,7 @@
 # Env:
 #   DEVELOPMENT_TEAM   Apple Team ID (required for device; recommended always)
 #   BUNDLE_ID          reverse-DNS id for convert
-#   APP_NAME           display name (default: Flagline)
+#   APP_NAME           display name (default: Sift)
 #   IOS_SIM_NAME       preferred sim name (optional; auto-picks if missing)
 set -euo pipefail
 
@@ -32,8 +32,8 @@ if [[ "${SKIP_DOCTOR:-0}" != "1" && -x "${ROOT}/safari/doctor.sh" ]]; then
 fi
 
 TARGET="${1:-all}"
-APP_NAME="${APP_NAME:-Flagline}"
-BUNDLE_ID="${BUNDLE_ID:-com.aevum.flagline}"
+APP_NAME="${APP_NAME:-Sift}"
+BUNDLE_ID="${BUNDLE_ID:-com.aevum.sift}"
 IOS_SIM_NAME="${IOS_SIM_NAME:-}"
 XCODE_DIR="${ROOT}/safari/Xcode"
 SKIP_CONVERT="${SKIP_CONVERT:-0}"
@@ -66,7 +66,7 @@ find_scheme() {
   fi
 
   if [[ "$platform" == "ios" ]]; then
-    # Prefer "Flagline (iOS)" style schemes from the converter
+    # Prefer "Sift (iOS)" style schemes from the converter
     while IFS= read -r scheme; do
       [[ "$scheme" == *"(iOS)"* || "$scheme" == *iOS* ]] && { echo "$scheme"; return; }
     done <<<"$schemes"

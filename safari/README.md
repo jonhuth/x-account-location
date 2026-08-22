@@ -28,4 +28,4 @@ safari/
 
 - **Safari = product** (paid niche, mobile Safari where Chrome extensions don’t exist)
 - **Chrome = R&D** (`chrome://extensions` → Load unpacked → `extension/`)
-- v1: **location flags + hide-by-country on iOS Safari**, X in the browser not the app, no backend
+- v1: **hide farms, hide spam countries, persist chrome** on iOS Safari. X in the browser, not the app. No backend.

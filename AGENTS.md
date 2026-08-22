@@ -1,23 +1,22 @@
-# Flagline - AGENTS.md
+# Sift - AGENTS.md
 
-Flagline is an iOS Safari extension for location flags and client-only country filtering on X.
+Sift is an x.com Safari/Chrome extension that cuts noise: hide farm accounts, hide spam countries, and persist chrome declutter on-device.
 
 **Surface strategy:** Safari on iOS is the paid product. Chrome is the load-unpacked R&D loop. Keep X in Safari, not the native X app.
 
 ## Monday MVP
 
-1. Show location flags beside x.com usernames.
-2. Hide tweet articles from selected countries.
-3. Let a flag tap toggle that country.
-4. Expose location, hidden countries, onboarding, and Calm home in the popup.
-5. Keep all shipped behavior client-only.
+1. Hide farm/bot tweets locally (people you follow never scored).
+2. Hide tweets from selected countries (tap a flag or popup).
+3. Persist per-view X chrome toggles on device. Calm-home preset optional.
+4. Client-only. Empty classify URL. No Desloppify merge.
 
 ## Architecture
 
 ```text
 x-account-location/
 ├── extension/             # Shared MV3 WebExtension source
-│   ├── manifest.json      # Flagline 3.0.0
+│   ├── manifest.json      # Sift 3.0.0
 │   ├── popup.html/js      # Location first, country hide, Calm home
 │   ├── content.js         # Location and timeline UI coordinator
 │   ├── pageScript.js      # X AboutAccountQuery in page context
@@ -65,7 +64,7 @@ No external backend host permission belongs in `extension/manifest.json`.
 
 ## Parked bot R&D
 
-Bot and mute-manager files stay in `extension/` for research but are **not** in v1 `content_scripts`. `bot_detection_enabled` defaults to `false`. Backend URLs in parked files are empty. The Flagline popup does not expose bot AI, lookup, Railway, Anthropic, Clean Interests, or Apply-to-X.
+Local bot scripts are loaded. `bot_detection_enabled` defaults **on**. Backend URL is empty — never call classify. Hide matching farm tweets (`data-xat-bot-hidden`). Mute-manager, Clean Interests, and AI lookup stay out of the popup. Not Desloppify (all-web).
 
 ## Safari compatibility
 
@@ -105,7 +104,7 @@ export DEVELOPMENT_TEAM=XXXXXXXXXX
 ./safari/run-sim.sh
 ```
 
-Human setup remains: enable Flagline in Safari settings and allow x.com. See `safari/TESTING.md` and `docs/agent/app-store-ship.md`.
+Human setup remains: enable Sift in Safari settings and allow x.com. See `safari/TESTING.md` and `docs/agent/app-store-ship.md`.
 
 ## MVP checks
 

@@ -1,54 +1,38 @@
-# Flagline
+# Sift
 
-Location flags and country filter for X.
-
-See where accounts are based. Tap a flag to hide that country. Optional calm-home preset.
+Cut noise on X. Hide farm accounts, spam countries, and distracting chrome. Everything stays on this device.
 
 - **Safari (iOS + macOS)** — product surface (paid App Store / TestFlight)
 - **Chrome** — fast R&D (load unpacked)
 
-Shared code is a Manifest V3 WebExtension under [`extension/`](./extension/). **Client-only.** No backend in the shipped package.
+This is an x.com-only SNR tool. It is **not** [Desloppify](https://github.com/jonhuth/desloppify) (all-web slop). Shared MV3 sources live in [`extension/`](./extension/).
 
-## Features (v1)
+## What it does
 
-- Country flag next to usernames (X About Account, your session)
-- Hide posts from selected countries (tap a flag, or the popup)
-- Calm home: Following + less chrome (optional)
-- On-device cache; no Flagline server
-
-Bot detection and mute-manager code remain in the repo for Chrome R&D. They are not loaded in the v1 content scripts.
+- **Hide farm / bot accounts** — local profile gates (extreme follow-farm, new shells, look-alike reply clusters). People you follow are never scored. No AI backend in v1.
+- **Hide countries** — tap a flag, or pick from the popup. For countries that flood the feed.
+- **X chrome** — per-view toggles (For you, Explore, trends, Who to follow, promoted, Grok, Communities, Premium, Topics). Saved in `chrome.storage.local`. Calm-home preset if you want one tap.
 
 ## Install — Chrome
 
-1. Clone this repo
-2. `chrome://extensions/` → Developer mode → **Load unpacked**
-3. Select the **`extension/`** directory (not the repo root)
-4. Open x.com
+1. `chrome://extensions/` → Developer mode → **Load unpacked**
+2. Select **`extension/`**
+3. Open x.com
 
-## Install — Safari (macOS + iOS)
+## Install — Safari
 
-Requires a **Mac with Xcode**. Packaging cannot be completed on Linux alone.
+Mac with Xcode:
 
 ```bash
-APP_NAME=Flagline BUNDLE_ID=com.aevum.flagline ./safari/convert.sh
+APP_NAME=Sift BUNDLE_ID=com.aevum.sift ./safari/convert.sh
 open safari/Xcode/*.xcodeproj
 ```
 
-Then follow **[safari/TESTING.md](./safari/TESTING.md)**. App Store path: **[docs/agent/app-store-ship.md](./docs/agent/app-store-ship.md)**.
-
-**Use Safari → x.com, not the X app.**
-
-## Repo layout
-
-```text
-extension/     Shared MV3 sources (Chrome + Safari)
-safari/        convert.sh, TESTING.md, generated Xcode (gitignored)
-backend/       Parked bot-classify API (not in the paid package)
-```
+Use **Safari → x.com**, not the X app. See [safari/TESTING.md](./safari/TESTING.md) and [docs/agent/app-store-ship.md](./docs/agent/app-store-ship.md).
 
 ## Privacy
 
-See [docs/privacy.md](./docs/privacy.md). Location queries use your logged-in X session in page context. Hide lists stay in extension local storage.
+[docs/privacy.md](./docs/privacy.md). No Sift server. Location comes from your X session on the page.
 
 ## License
 

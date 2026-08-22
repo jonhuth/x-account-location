@@ -1,12 +1,13 @@
 const TOGGLE_KEY = 'extension_enabled';
 const STATS_KEY = 'location_stats';
+const BOT_TOGGLE_KEY = 'bot_detection_enabled';
 const DEFAULT_ENABLED = true;
 const CF = window.CountryFilter;
 const FM = window.FocusMode;
 
 if (!CF || !FM) {
-  document.body.textContent = "Flagline failed to load. Reload the extension.";
-  throw new Error("Flagline popup missing CountryFilter or FocusMode");
+  document.body.textContent = "Sift failed to load. Reload the extension.";
+  throw new Error("Sift popup missing CountryFilter or FocusMode");
 }
 
 let statsState = {};
@@ -131,8 +132,6 @@ function renderQuickCountries() {
 }
 
 function renderLocation() {
-  document.getElementById('profile-count').textContent = String(uniqueProfileCount(statsState));
-  document.getElementById('hidden-count').textContent = String(hiddenState.countries.length);
   renderHiddenCountries();
   renderQuickCountries();
 }
@@ -170,8 +169,16 @@ document.getElementById('flags-toggle').addEventListener('click', async () => {
   const enabled = !current;
   await chrome.storage.local.set({ [TOGGLE_KEY]: enabled });
   setSwitch(document.getElementById('flags-toggle'), enabled);
-  document.getElementById('flags-status').textContent = enabled ? 'Flags are on' : 'Flags are off';
   await notifyActiveTab({ type: 'extensionToggle', enabled });
+});
+
+document.getElementById('bots-toggle').addEventListener('click', async () => {
+  const current = document.getElementById('bots-toggle').getAttribute('aria-checked') === 'true';
+  const enabled = !current;
+  await chrome.storage.local.set({ [BOT_TOGGLE_KEY]: enabled });
+  setSwitch(document.getElementById('bots-toggle'), enabled);
+  await notifyActiveTab({ type: 'botDetectionToggle', enabled });
+  await notifyActiveTab({ type: 'hideBotsToggle', enabled });
 });
 
 function calmPreset() {
@@ -194,30 +201,50 @@ function renderCalm(state) {
   document.getElementById('calm-status').textContent = active ? 'Calm home is on.' : 'Calm home is off.';
 }
 
+function refreshFocusSwitches(state) {
+  document.querySelectorAll('[data-focus-key]').forEach((el) => {
+    setSwitch(el, Boolean(state[el.dataset.focusKey]));
+  });
+}
+
+document.querySelectorAll('[data-focus-key]').forEach((el) => {
+  el.addEventListener('click', async () => {
+    const next = el.getAttribute('aria-checked') !== 'true';
+    setSwitch(el, next);
+    const state = await FM.saveFocusState({ [el.dataset.focusKey]: next });
+    renderCalm(state);
+    await notifyActiveTab({ type: 'focusModeUpdated' });
+  });
+});
+
 document.getElementById('calm-enable').addEventListener('click', async () => {
   const state = await FM.saveFocusState(calmPreset());
+  refreshFocusSwitches(state);
   renderCalm(state);
   await notifyActiveTab({ type: 'focusModeUpdated' });
 });
 
 document.getElementById('calm-disable').addEventListener('click', async () => {
   const state = await FM.saveFocusState(FM.DEFAULT_FOCUS());
+  refreshFocusSwitches(state);
   renderCalm(state);
   await notifyActiveTab({ type: 'focusModeUpdated' });
 });
 
 async function initPopup() {
   const [stored, hidden, focus] = await Promise.all([
-    chrome.storage.local.get([TOGGLE_KEY, STATS_KEY]),
+    chrome.storage.local.get([TOGGLE_KEY, STATS_KEY, BOT_TOGGLE_KEY]),
     CF.loadHiddenCountries(),
     FM.loadFocusState(),
   ]);
   const enabled = stored[TOGGLE_KEY] !== undefined ? Boolean(stored[TOGGLE_KEY]) : DEFAULT_ENABLED;
+  const botsOn = stored[BOT_TOGGLE_KEY] !== false;
   statsState = stored[STATS_KEY] && typeof stored[STATS_KEY] === 'object' ? stored[STATS_KEY] : {};
   hiddenState = hidden;
   setSwitch(document.getElementById('flags-toggle'), enabled);
-  document.getElementById('flags-status').textContent = enabled ? 'Flags are on' : 'Flags are off';
+  setSwitch(document.getElementById('bots-toggle'), botsOn);
   renderLocation();
+  refreshFocusSwitches(focus);
   renderCalm(focus);
 }
 
@@ -237,5 +264,5 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 initPopup().catch(() => {
-  document.getElementById('country-status').textContent = 'Could not load settings. Reopen Flagline.';
+  document.getElementById('country-status').textContent = 'Could not load settings. Reopen Sift.';
 });

@@ -1,6 +1,6 @@
-# Testing Flagline on Safari
+# Testing Sift on Safari
 
-Flagline's product surface is iOS Safari. Test on `https://x.com` in Safari, not in the native X app.
+Sift's product surface is iOS Safari. Test on `https://x.com` in Safari, not in the native X app.
 
 ## Prerequisites
 
@@ -20,8 +20,8 @@ open safari/Xcode/*.xcodeproj
 
 Defaults:
 
-- App name: `Flagline`
-- Bundle ID: `com.aevum.flagline`
+- App name: `Sift`
+- Bundle ID: `com.aevum.sift`
 - Version: `3.0.0`
 
 Choose the Aevum development team for both the containing app and Safari Web Extension targets. Do not commit generated files under `safari/Xcode/`.
@@ -40,14 +40,14 @@ export DEVELOPMENT_TEAM=XXXXXXXXXX
 The popup must tell the user:
 
 1. Open Safari → x.com, not the X app.
-2. Allow Flagline for this site.
+2. Allow Sift for this site.
 3. Flags appear. Tap a flag to hide that country.
 
-On the device, open **Settings → Apps → Safari → Extensions**, enable Flagline, and allow x.com. The exact Settings path varies by iOS release.
+On the device, open **Settings → Apps → Safari → Extensions**, enable Sift, and allow x.com. The exact Settings path varies by iOS release.
 
 ## Monday MVP success checklist
 
-- [ ] Flagline appears with the correct name and version.
+- [ ] Sift appears with the correct name and version.
 - [ ] The popup opens on the selected **Location** panel.
 - [ ] First-run Safari, x.com, and site-permission instructions are visible.
 - [ ] At least one known location flag appears within 3 seconds after timeline content settles.
@@ -74,13 +74,13 @@ rg -n 'railway|anthropic|x-bot-detector' \
   extension/manifest.json extension/popup.html extension/popup.js extension/countryFilter.js
 ```
 
-Expect no matches. In Safari Web Inspector, confirm Flagline traffic stays on x.com/twitter.com. Location comes from X's `AboutAccountQuery` through the user's current page session.
+Expect no matches. In Safari Web Inspector, confirm Sift traffic stays on x.com/twitter.com. Location comes from X's `AboutAccountQuery` through the user's current page session.
 
 ## Device test
 
 1. Run the iOS scheme on a physical device.
-2. Enable Flagline in Safari settings.
-3. Open Safari, sign in to x.com, and allow Flagline for the site.
+2. Enable Sift in Safari settings.
+3. Open Safari, sign in to x.com, and allow Sift for the site.
 4. Open the extension popup and confirm Location is selected.
 5. Scroll a timeline until flags appear.
 6. Tap a flag for India and confirm India posts disappear.
@@ -90,7 +90,7 @@ Expect no matches. In Safari Web Inspector, confirm Flagline traffic stays on x.
 
 ## macOS Safari smoke test
 
-Build and run the macOS containing app. Enable Flagline in **Safari → Settings → Extensions**, allow x.com, then run the same popup and timeline checklist. macOS is a fast smoke test; the iOS device result is authoritative.
+Build and run the macOS containing app. Enable Sift in **Safari → Settings → Extensions**, allow x.com, then run the same popup and timeline checklist. macOS is a fast smoke test; the iOS device result is authoritative.
 
 ## TestFlight
 
@@ -100,7 +100,7 @@ Archive in Xcode and upload to App Store Connect. Install the internal TestFligh
 
 | Symptom | Check |
 |---|---|
-| No flags | Flagline enabled, x.com allowed, logged in, Safari not X app |
+| No flags | Sift enabled, x.com allowed, logged in, Safari not X app |
 | Popup works but timeline does not | Hard-refresh x.com after reinstall |
 | `pageScript.js` fails | Manifest web-accessible resource and converted resources |
 | Settings do not persist | Safari storage path; missing `getBytesInUse` must not block writes |

@@ -25,7 +25,9 @@ const STATS_KEY = 'location_stats';
 // Bot Detection state
 const BOT_TOGGLE_KEY = 'bot_detection_enabled';
 const BOT_SENSITIVITY_KEY = 'bot_sensitivity';
-let botDetectionEnabled = false;
+const HIDE_BOTS_KEY = 'hide_bots_enabled';
+let botDetectionEnabled = true;
+let hideBotsEnabled = true;
 let botSensitivity = 3;
 let pageScriptInjected = false;
 
@@ -72,13 +74,15 @@ let lastLoggedStoragePercent = -1;
 // Load enabled state
 async function loadEnabledState() {
   try {
-    const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY]);
+    const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY, HIDE_BOTS_KEY]);
     extensionEnabled = result[TOGGLE_KEY] !== undefined ? result[TOGGLE_KEY] : DEFAULT_ENABLED;
-    botDetectionEnabled = result[BOT_TOGGLE_KEY] === true;
+    botDetectionEnabled = result[BOT_TOGGLE_KEY] !== false;
+    hideBotsEnabled = result[HIDE_BOTS_KEY] !== false;
     botSensitivity = result[BOT_SENSITIVITY_KEY] || 3;
   } catch (error) {
     extensionEnabled = DEFAULT_ENABLED;
-    botDetectionEnabled = false;
+    botDetectionEnabled = true;
+    hideBotsEnabled = true;
     botSensitivity = 3;
   }
 }
@@ -94,7 +98,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.type === 'botDetectionToggle') {
     botDetectionEnabled = request.enabled;
     if (botDetectionEnabled) setTimeout(scheduleBotProcessing, 500);
-    else window.BotUI?.removeAllBotUI?.();
+    else {
+      window.BotUI?.removeAllBotUI?.();
+      clearBotHides();
+    }
+  } else if (request.type === 'hideBotsToggle') {
+    hideBotsEnabled = request.enabled;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach((el) => {
+      applyBotHideToTweet(el);
+    });
   } else if (request.type === 'botSensitivityChange') {
     botSensitivity = request.sensitivity;
   } else if (request.type === 'botWhitelistUpdate') {
@@ -114,7 +126,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.type === 'dataCleared') {
     locationCache.clear();
     locationStats.clear();
-    botDetectionEnabled = false;
+    botDetectionEnabled = true;
+    hideBotsEnabled = true;
     botSensitivity = 3;
     extensionEnabled = true;
     muteBlockState = null;
@@ -162,11 +175,33 @@ async function loadCountryFilterState() {
 
 function reconcileTweetVisibility(el) {
   if (!el?.style) return;
-  if (el.hasAttribute('data-xat-geo-hidden') || el.hasAttribute('data-xat-muted')) {
+  if (
+    el.hasAttribute('data-xat-geo-hidden') ||
+    el.hasAttribute('data-xat-muted') ||
+    el.hasAttribute('data-xat-bot-hidden')
+  ) {
     el.style.display = 'none';
   } else {
     el.style.removeProperty('display');
   }
+}
+
+function applyBotHideToTweet(el) {
+  if (!el?.matches?.('article[data-testid="tweet"]')) return;
+  const isBot = el.dataset.botVerdict === 'bot' || el.dataset.botProcessed === 'bot';
+  if (hideBotsEnabled && botDetectionEnabled && isBot) {
+    el.setAttribute('data-xat-bot-hidden', '1');
+  } else {
+    el.removeAttribute('data-xat-bot-hidden');
+  }
+  reconcileTweetVisibility(el);
+}
+
+function clearBotHides() {
+  document.querySelectorAll('article[data-testid="tweet"][data-xat-bot-hidden]').forEach((el) => {
+    el.removeAttribute('data-xat-bot-hidden');
+    reconcileTweetVisibility(el);
+  });
 }
 
 function clearCountryFilterHides() {
@@ -1151,6 +1186,8 @@ function applyKnownAndStop(el, username, verdict) {
   window.BotUI?.applyBotUI?.(el, verdict, username);
   el.dataset.botProcessed = statusFromVerdict(verdict);
   el.dataset.botUsername = String(username).toLowerCase();
+  el.dataset.botVerdict = statusFromVerdict(verdict);
+  applyBotHideToTweet(el);
   return true;
 }
 
@@ -1253,6 +1290,8 @@ async function processBotDetection(el) {
     window.BotUI?.applyBotUI?.(el, display, username);
     el.dataset.botProcessed = statusFromVerdict(display);
     el.dataset.botUsername = username.toLowerCase();
+    el.dataset.botVerdict = statusFromVerdict(display);
+    applyBotHideToTweet(el);
     return;
   }
 
@@ -1321,6 +1360,8 @@ async function processBotDetection(el) {
           ? 'slop'
           : 'human';
       el.dataset.botUsername = username.toLowerCase();
+      el.dataset.botVerdict = el.dataset.botProcessed;
+      applyBotHideToTweet(el);
       // Still index for thread dup so a later peer can match (detail views)
       window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
       return;
@@ -1335,6 +1376,8 @@ async function processBotDetection(el) {
     window.BotUI?.applyBotUI?.(el, display, username);
     el.dataset.botProcessed = 'bot';
     el.dataset.botUsername = username.toLowerCase();
+    el.dataset.botVerdict = 'bot';
+    applyBotHideToTweet(el);
     const peers = Array.isArray(threadDup.peerUsernames)
       ? threadDup.peerUsernames
       : threadDup.peerUsername
@@ -1363,6 +1406,8 @@ async function processBotDetection(el) {
     const verdict = await window.BotCache?.queueForClassification?.(username, replyData);
     window.BotUI?.resolvePending?.(el, verdict, username);
     el.dataset.botProcessed = verdict?.isBot ? 'bot' : (verdict?.isSlop ? 'slop' : 'human');
+    el.dataset.botVerdict = el.dataset.botProcessed;
+    applyBotHideToTweet(el);
   } catch {
     el.querySelector?.('[data-bot-skeleton]')?.remove?.();
     el.dataset.botProcessed = 'error';

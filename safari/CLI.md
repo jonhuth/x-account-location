@@ -48,8 +48,8 @@ git pull
 
 # One-time env (shell profile or direnv on Mac)
 export DEVELOPMENT_TEAM=XXXXXXXXXX   # 10-char Team ID
-export BUNDLE_ID=com.aevum.flagline
-export APP_NAME="Flagline"
+export BUNDLE_ID=com.aevum.sift
+export APP_NAME="Sift"
 
 ./safari/doctor.sh                   # fails closed on CLT-only
 ./safari/build.sh ios-sim            # convert + build

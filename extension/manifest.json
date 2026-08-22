@@ -1,15 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "Flagline",
+  "name": "Sift",
   "version": "3.0.0",
-  "description": "Location flags and country filter for X. See where accounts are based, hide countries you do not want. Safari + Chrome.",
+  "description": "Cut noise on X. Hide farm accounts, spam countries, and distracting chrome. All on-device.",
   "permissions": [
     "storage",
     "tabs"
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Flagline",
+    "default_title": "Sift",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -36,6 +36,10 @@
       "js": [
         "countryFlags.js",
         "countryFilter.js",
+        "botDetection.js",
+        "botLegitimacy.js",
+        "botCache.js",
+        "botUI.js",
         "focusMode.js",
         "content.js"
       ],
