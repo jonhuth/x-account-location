@@ -146,7 +146,7 @@ fi
 if [[ -n "${BUNDLE_ID:-}" ]]; then
   pass "BUNDLE_ID=${BUNDLE_ID}"
 else
-  note "BUNDLE_ID unset — convert.sh defaults to com.example.xaccounttools (change before shipping)"
+  note "BUNDLE_ID unset — convert.sh defaults to com.aevum.flagline"
 fi
 
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "Apple Development\|Apple Distribution"; then

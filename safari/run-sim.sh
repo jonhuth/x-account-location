@@ -17,8 +17,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-APP_NAME="${APP_NAME:-X Account Tools}"
-BUNDLE_ID="${BUNDLE_ID:-com.example.xaccounttools}"
+APP_NAME="${APP_NAME:-Flagline}"
+BUNDLE_ID="${BUNDLE_ID:-com.aevum.flagline}"
 IOS_SIM_NAME="${IOS_SIM_NAME:-}"
 
 # Ensure built

@@ -1,17 +1,15 @@
 {
   "manifest_version": 3,
-  "name": "X Account Tools",
-  "version": "2.5.0",
-  "description": "Location flags, bot detection, focus declutter, mute/block tools for X/Twitter — Chrome + Safari (iOS/macOS)",
+  "name": "Flagline",
+  "version": "3.0.0",
+  "description": "Location flags and country filter for X. See where accounts are based, hide countries you do not want. Safari + Chrome.",
   "permissions": [
-    "activeTab",
     "storage",
-    "tabs",
-    "scripting"
+    "tabs"
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "X Account Tools",
+    "default_title": "Flagline",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -27,8 +25,7 @@
   },
   "host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*",
-    "http://nas.tail5becd.ts.net:3004/*"
+    "https://twitter.com/*"
   ],
   "content_scripts": [
     {
@@ -38,11 +35,7 @@
       ],
       "js": [
         "countryFlags.js",
-        "botDetection.js",
-        "botLegitimacy.js",
-        "botCache.js",
-        "botUI.js",
-        "muteBlock.js",
+        "countryFilter.js",
         "focusMode.js",
         "content.js"
       ],

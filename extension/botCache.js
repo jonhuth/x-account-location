@@ -19,7 +19,7 @@ const BOT_BATCH_SIZE = 5;
 const BOT_BATCH_DELAY = 500;
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_RETRIES = 2;
-const BACKEND_URL = "http://nas.tail5becd.ts.net:3004";
+const BACKEND_URL = ""; // parked — paid Safari build is client-only
 
 // Account reputation: after N consistent hits, skip server
 const ACCOUNT_PRIOR_MIN_SAMPLES = 3;
