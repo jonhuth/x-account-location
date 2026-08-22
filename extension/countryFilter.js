@@ -88,9 +88,23 @@
 
   function mapLocation(usernameToLocationMap, username) {
     if (!usernameToLocationMap || !username) return '';
-    const entry = typeof usernameToLocationMap.get === 'function'
-      ? usernameToLocationMap.get(username) || usernameToLocationMap.get(username.toLowerCase())
-      : usernameToLocationMap[username] || usernameToLocationMap[username.toLowerCase()];
+    let entry;
+    if (typeof usernameToLocationMap.get === 'function') {
+      entry = usernameToLocationMap.get(username) || usernameToLocationMap.get(username.toLowerCase());
+      if (!entry && typeof usernameToLocationMap.entries === 'function') {
+        for (const [savedUsername, savedEntry] of usernameToLocationMap.entries()) {
+          if (String(savedUsername || '').toLowerCase() === username.toLowerCase()) {
+            entry = savedEntry;
+            break;
+          }
+        }
+      }
+    } else {
+      const key = Object.keys(usernameToLocationMap).find(
+        (savedUsername) => savedUsername.toLowerCase() === username.toLowerCase(),
+      );
+      entry = key ? usernameToLocationMap[key] : undefined;
+    }
     return typeof entry === 'object' && entry ? entry.location : entry;
   }
 

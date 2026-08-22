@@ -854,7 +854,8 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
     const article = usernameElement.matches?.('article[data-testid="tweet"]')
       ? usernameElement
       : root.closest?.('article[data-testid="tweet"]');
-    if (article && country) {
+    const articleUsername = article ? extractUsername(article) : '';
+    if (article && country && String(articleUsername || '').toLowerCase() === String(screenName || '').toLowerCase()) {
       article.setAttribute('data-xat-country', country);
       applyCountryFilterToTweet(article);
     }
