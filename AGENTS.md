@@ -14,7 +14,7 @@ Spam Filter for X is an x.com Safari/Chrome extension that cuts noise: hide farm
 ## Architecture
 
 ```text
-x-account-location/
+spam-filter-for-x/
 ├── extension/             # Shared MV3 WebExtension source
 │   ├── manifest.json      # Spam Filter for X 3.0.0
 │   ├── popup.html/js      # Location first, country hide, Calm home

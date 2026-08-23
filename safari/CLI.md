@@ -43,7 +43,7 @@ sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 ## Agent recipe (Mac host)
 
 ```bash
-cd ~/dev/x-account-location
+cd ~/dev/spam-filter-for-x
 git pull
 
 # One-time env (shell profile or direnv on Mac)
@@ -125,7 +125,7 @@ First cable: Trust Computer + enable Developer Mode on device (GUI). After that,
 
 ```bash
 # from homebox agent
-ssh mac "cd ~/dev/x-account-location && git pull && ./safari/doctor.sh && ./safari/build.sh ios-sim"
+ssh mac "cd ~/dev/spam-filter-for-x && git pull && ./safari/doctor.sh && ./safari/build.sh ios-sim"
 ```
 
 (Host alias `mac` is yours to define on Tailscale MagicDNS.)
