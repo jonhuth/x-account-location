@@ -1,6 +1,7 @@
 const TOGGLE_KEY = 'extension_enabled';
 const STATS_KEY = 'location_stats';
 const BOT_TOGGLE_KEY = 'bot_detection_enabled';
+const ONBOARDING_KEY = 'onboarding_dismissed';
 const DEFAULT_ENABLED = true;
 const CF = window.CountryFilter;
 const FM = window.FocusMode;
@@ -198,7 +199,7 @@ function calmPreset() {
 
 function renderCalm(state) {
   const active = FM.anyFocusEnabled(state);
-  document.getElementById('calm-status').textContent = active ? 'Calm home is on.' : 'Calm home is off.';
+  document.getElementById('calm-status').textContent = active ? 'Calm home is on.' : '';
 }
 
 function refreshFocusSwitches(state) {
@@ -231,9 +232,14 @@ document.getElementById('calm-disable').addEventListener('click', async () => {
   await notifyActiveTab({ type: 'focusModeUpdated' });
 });
 
+document.getElementById('onboarding-dismiss')?.addEventListener('click', async () => {
+  document.getElementById('onboarding').hidden = true;
+  await chrome.storage.local.set({ [ONBOARDING_KEY]: true });
+});
+
 async function initPopup() {
   const [stored, hidden, focus] = await Promise.all([
-    chrome.storage.local.get([TOGGLE_KEY, STATS_KEY, BOT_TOGGLE_KEY]),
+    chrome.storage.local.get([TOGGLE_KEY, STATS_KEY, BOT_TOGGLE_KEY, ONBOARDING_KEY]),
     CF.loadHiddenCountries(),
     FM.loadFocusState(),
   ]);
@@ -241,6 +247,7 @@ async function initPopup() {
   const botsOn = stored[BOT_TOGGLE_KEY] !== false;
   statsState = stored[STATS_KEY] && typeof stored[STATS_KEY] === 'object' ? stored[STATS_KEY] : {};
   hiddenState = hidden;
+  if (stored[ONBOARDING_KEY]) document.getElementById('onboarding').hidden = true;
   setSwitch(document.getElementById('flags-toggle'), enabled);
   setSwitch(document.getElementById('bots-toggle'), botsOn);
   renderLocation();
