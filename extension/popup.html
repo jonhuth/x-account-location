@@ -11,23 +11,14 @@
       --fg: #0f1419;
       --muted: #536471;
       --border: #eff3f4;
-      --border-strong: #ccd6dd;
+      --border-strong: #cfd9de;
       --primary: #1d9bf0;
       --primary-hover: #1a8cd8;
       --primary-soft: rgba(29, 155, 240, 0.12);
       --danger: #f4212e;
-      --radius-sm: 6px;
-      --radius-md: 10px;
+      --radius: 10px;
       --radius-pill: 999px;
-      --space-1: 4px;
-      --space-2: 8px;
-      --space-3: 12px;
-      --space-4: 16px;
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      --text-title: 17px;
-      --text-body: 13px;
-      --text-meta: 12px;
-      --shadow-focus: 0 0 0 2px var(--primary-soft), 0 0 0 3px var(--primary);
     }
 
     @media (prefers-color-scheme: dark) {
@@ -46,79 +37,80 @@
 
     body {
       width: 340px;
-      max-height: 590px;
+      max-height: 560px;
       overflow-y: auto;
       margin: 0;
-      padding: var(--space-4);
+      padding: 14px 16px 16px;
       color: var(--fg);
       background: var(--bg);
-      font-family: var(--font);
-      font-size: var(--text-body);
-      line-height: 1.4;
+      font: 13px/1.4 var(--font);
       -webkit-font-smoothing: antialiased;
     }
 
-    h1, h2, p, ol { margin: 0; }
-    button, input { font: inherit; }
+    h1, h2, p { margin: 0; }
+    button, input { font: inherit; color: inherit; }
 
-    .header { margin-bottom: var(--space-3); }
-    .title { font-size: var(--text-title); font-weight: 750; letter-spacing: -0.01em; }
-    .subtitle { margin-top: 2px; color: var(--muted); font-size: var(--text-meta); }
+    .header { margin-bottom: 12px; }
+    .title { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+    .subtitle { margin-top: 2px; color: var(--muted); font-size: 12px; }
 
     .tabs {
       display: flex;
-      margin-bottom: var(--space-3);
+      margin-bottom: 12px;
       border-bottom: 1px solid var(--border);
     }
-
     .tab {
       flex: 1;
-      padding: var(--space-2) var(--space-1);
+      padding: 8px 4px;
       border: 0;
       border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
       color: var(--muted);
       background: transparent;
-      font-weight: 650;
+      font-weight: 600;
       cursor: pointer;
     }
+    .tab[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--primary); }
+    .tab:focus-visible, button:focus-visible, input:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
 
-    .tab[aria-selected="true"] { color: var(--primary); border-bottom-color: var(--primary); }
-    .tab:focus-visible, button:focus-visible, input:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
     .tab-panel { display: none; }
     .tab-panel.active { display: block; }
 
-    .stack { display: flex; flex-direction: column; gap: var(--space-3); }
-    .section { padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
-    .section:last-child { padding-bottom: 0; border-bottom: 0; }
-    .section-label { margin-bottom: var(--space-2); font-size: var(--text-meta); font-weight: 700; }
-    .meta { color: var(--muted); font-size: var(--text-meta); }
-    .status { min-height: 17px; margin-top: var(--space-2); color: var(--muted); font-size: var(--text-meta); text-align: center; }
+    .stack { display: flex; flex-direction: column; gap: 12px; }
 
-    .onboarding {
-      padding: var(--space-3);
-      border: 1px solid rgba(29, 155, 240, 0.24);
-      border-radius: var(--radius-md);
+    .hint {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: var(--radius);
       background: var(--primary-soft);
+      color: var(--fg);
+      font-size: 12px;
     }
-
-    .steps { padding-left: 20px; color: var(--fg); font-size: var(--text-meta); }
-    .steps li + li { margin-top: var(--space-1); }
+    .hint p { flex: 1; }
+    .hint[hidden] { display: none; }
 
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: var(--space-3);
-      padding: 10px var(--space-3);
-      border-radius: var(--radius-md);
+      gap: 12px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
       background: var(--bg-elevated);
     }
-
+    .row-copy { min-width: 0; }
     .row-label { font-weight: 600; }
-    .section .row + .row { margin-top: 6px; }
+    .meta { color: var(--muted); font-size: 12px; }
+    .row .meta { margin-top: 1px; }
+
     .switch {
       position: relative;
-      width: 44px;
+      width: 42px;
       height: 24px;
       flex: 0 0 auto;
       padding: 0;
@@ -127,7 +119,6 @@
       background: var(--border-strong);
       cursor: pointer;
     }
-
     .switch[aria-checked="true"] { background: var(--primary); }
     .switch::after {
       content: '';
@@ -138,48 +129,53 @@
       height: 20px;
       border-radius: 50%;
       background: #fff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
       transition: transform 0.15s ease;
     }
-    .switch[aria-checked="true"]::after { transform: translateX(20px); }
+    .switch[aria-checked="true"]::after { transform: translateX(18px); }
 
-    .counts { display: flex; gap: var(--space-2); }
-    .count {
-      flex: 1;
-      padding: var(--space-2);
-      border-radius: var(--radius-md);
-      background: var(--bg-elevated);
-      text-align: center;
+    .section-label {
+      margin: 0 0 6px;
+      font-size: 12px;
+      font-weight: 700;
     }
-    .count strong { display: block; font-size: 18px; }
-    .count span { color: var(--muted); font-size: var(--text-meta); }
 
-    .list { display: flex; flex-direction: column; gap: var(--space-2); }
-    .list-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-    .empty { padding: var(--space-3); border-radius: var(--radius-md); color: var(--muted); background: var(--bg-elevated); font-size: var(--text-meta); text-align: center; }
+    .list { display: flex; flex-direction: column; gap: 6px; }
+    .list-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 8px;
+      background: var(--bg-elevated);
+    }
+    .empty { color: var(--muted); font-size: 12px; }
 
     .icon-btn {
-      width: 26px;
-      height: 26px;
+      width: 24px;
+      height: 24px;
       padding: 0;
       border: 0;
       border-radius: 50%;
       color: var(--muted);
-      background: var(--bg-elevated);
+      background: transparent;
       cursor: pointer;
+      font-size: 16px;
+      line-height: 1;
     }
     .icon-btn:hover { color: var(--danger); }
 
-    .input-row { display: flex; gap: var(--space-2); }
+    .input-row { display: flex; gap: 8px; margin-top: 8px; }
     .input {
       min-width: 0;
       flex: 1;
       padding: 8px 10px;
       border: 1px solid var(--border-strong);
-      border-radius: var(--radius-sm);
-      color: var(--fg);
+      border-radius: 8px;
       background: var(--bg);
     }
+    .input::placeholder { color: var(--muted); }
 
     .btn {
       padding: 8px 12px;
@@ -187,116 +183,112 @@
       border-radius: var(--radius-pill);
       color: #fff;
       background: var(--primary);
-      font-weight: 700;
+      font-weight: 650;
       cursor: pointer;
+      white-space: nowrap;
     }
     .btn:hover { background: var(--primary-hover); }
-    .btn--secondary { color: var(--fg); background: var(--bg-elevated); border: 1px solid var(--border); }
-    .btn--secondary:hover { background: var(--border); }
-    .btn-row { display: flex; gap: var(--space-2); }
+    .btn--ghost {
+      color: var(--fg);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+    }
+    .btn--ghost:hover { background: var(--border); }
+    .btn-row { display: flex; gap: 8px; }
     .btn-row .btn { flex: 1; }
 
     .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .chip {
-      padding: 5px 9px;
+      padding: 4px 8px;
       border: 1px solid var(--border);
       border-radius: var(--radius-pill);
-      color: var(--fg);
       background: var(--bg-elevated);
-      font-size: var(--text-meta);
+      font-size: 12px;
       cursor: pointer;
     }
     .chip:hover { border-color: var(--primary); color: var(--primary); }
 
-    .calm-card { padding: var(--space-3); border-radius: var(--radius-md); background: var(--bg-elevated); }
-    .calm-card p + p { margin-top: var(--space-2); }
+    .status {
+      min-height: 0;
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .status:empty { display: none; }
+
+    .toggles { display: flex; flex-direction: column; gap: 6px; }
   </style>
 </head>
 <body>
   <header class="header">
     <h1 class="title">Spam Filter for X</h1>
-    <p class="subtitle">Hide bots, countries, and clutter. On this device.</p>
+    <p class="subtitle">Hide bots, countries, and clutter</p>
   </header>
 
   <nav class="tabs" role="tablist" aria-label="Spam Filter settings">
     <button class="tab" id="tab-btn-filter" type="button" role="tab" aria-selected="true" aria-controls="tab-filter" data-tab="filter">Filter</button>
-    <button class="tab" id="tab-btn-chrome" type="button" role="tab" aria-selected="false" aria-controls="tab-chrome" data-tab="chrome" tabindex="-1">Chrome</button>
+    <button class="tab" id="tab-btn-layout" type="button" role="tab" aria-selected="false" aria-controls="tab-layout" data-tab="layout" tabindex="-1">Layout</button>
   </nav>
 
   <main>
     <div class="tab-panel active" id="tab-filter" role="tabpanel" aria-labelledby="tab-btn-filter">
       <div class="stack">
-        <section class="onboarding" aria-labelledby="onboarding-title">
-          <h2 class="section-label" id="onboarding-title">Start in Safari</h2>
-          <ol class="steps">
-            <li>Open Safari → x.com, not the X app.</li>
-            <li>Allow Spam Filter for this site.</li>
-            <li>Farm accounts hide. Tap a flag to hide that country.</li>
-          </ol>
-        </section>
+        <div class="hint" id="onboarding">
+          <p>Safari → x.com (not the X app) → allow this site.</p>
+          <button class="icon-btn" id="onboarding-dismiss" type="button" aria-label="Dismiss">×</button>
+        </div>
 
-        <section class="section">
-          <div class="row">
-            <div>
-              <div class="row-label" id="bots-label">Hide farm / bot accounts</div>
-              <div class="meta">Local signals only. People you follow stay.</div>
-            </div>
-            <button class="switch" id="bots-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="bots-label"></button>
+        <div class="row">
+          <div class="row-copy">
+            <div class="row-label" id="bots-label">Hide farm accounts</div>
+            <div class="meta">People you follow stay</div>
           </div>
-        </section>
+          <button class="switch" id="bots-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="bots-label"></button>
+        </div>
 
-        <section class="section">
-          <div class="section-label">Hidden countries</div>
-          <p class="meta">Hide posts from countries that flood the feed with spam.</p>
+        <section>
+          <h2 class="section-label">Hidden countries</h2>
           <div class="list" id="hidden-list"></div>
-          <div class="input-row" style="margin-top:8px">
-            <input class="input" id="country-input" type="text" autocomplete="off" placeholder="Add a country" aria-label="Country to hide">
+          <div class="input-row">
+            <input class="input" id="country-input" type="text" autocomplete="off" placeholder="India, Nigeria…" aria-label="Country to hide">
             <button class="btn" id="country-add" type="button">Hide</button>
           </div>
           <p class="status" id="country-status" aria-live="polite"></p>
         </section>
 
-        <section class="section" id="quick-section" hidden>
-          <div class="section-label">Seen on your timeline</div>
+        <section id="quick-section" hidden>
+          <h2 class="section-label">Seen on your timeline</h2>
           <div class="chips" id="quick-countries"></div>
         </section>
 
-        <section class="section">
-          <div class="row">
-            <div>
-              <div class="row-label" id="flags-label">Show location flags</div>
-              <div class="meta" id="flags-status">Needed to pick countries from the timeline.</div>
-            </div>
-            <button class="switch" id="flags-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="flags-label"></button>
+        <div class="row">
+          <div class="row-copy">
+            <div class="row-label" id="flags-label">Show flags</div>
+            <div class="meta">Tap a flag on X to hide that country</div>
           </div>
-        </section>
+          <button class="switch" id="flags-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="flags-label"></button>
+        </div>
       </div>
     </div>
 
-    <div class="tab-panel" id="tab-chrome" role="tabpanel" aria-labelledby="tab-btn-chrome" hidden>
+    <div class="tab-panel" id="tab-layout" role="tabpanel" aria-labelledby="tab-btn-layout" hidden>
       <div class="stack">
-        <section class="calm-card">
-          <h2 class="section-label">X chrome</h2>
-          <p>Hide distracting bits. Each toggle saves on this device and sticks across sessions.</p>
-        </section>
-        <section class="section">
-          <div class="btn-row">
-            <button class="btn" id="calm-enable" type="button">Calm home</button>
-            <button class="btn btn--secondary" id="calm-disable" type="button">All off</button>
-          </div>
-          <p class="status" id="calm-status" aria-live="polite">Loading…</p>
-        </section>
-        <section class="section" id="focusToggles">
+        <div class="btn-row">
+          <button class="btn" id="calm-enable" type="button">Calm home</button>
+          <button class="btn btn--ghost" id="calm-disable" type="button">Reset</button>
+        </div>
+        <p class="status" id="calm-status" aria-live="polite"></p>
+        <div class="toggles" id="focusToggles">
           <div class="row">
-            <span class="row-label" id="focusForYouLabel">Hide “For you” tab</span>
+            <span class="row-label" id="focusForYouLabel">Hide For you</span>
             <button type="button" class="switch" id="focusHideForYou" role="switch" aria-checked="false" aria-labelledby="focusForYouLabel" data-focus-key="hideForYouTab"></button>
           </div>
           <div class="row">
-            <span class="row-label" id="focusForceLabel">Always use Following</span>
+            <span class="row-label" id="focusForceLabel">Always Following</span>
             <button type="button" class="switch" id="focusForceFollowing" role="switch" aria-checked="false" aria-labelledby="focusForceLabel" data-focus-key="forceFollowing"></button>
           </div>
           <div class="row">
-            <span class="row-label" id="focusNewsLabel">Hide News / Explore</span>
+            <span class="row-label" id="focusNewsLabel">Hide Explore</span>
             <button type="button" class="switch" id="focusHideNews" role="switch" aria-checked="false" aria-labelledby="focusNewsLabel" data-focus-key="hideNewsExplore"></button>
           </div>
           <div class="row">
@@ -308,15 +300,15 @@
             <button type="button" class="switch" id="focusHideWtf" role="switch" aria-checked="false" aria-labelledby="focusWtfLabel" data-focus-key="hideWhoToFollow"></button>
           </div>
           <div class="row">
-            <span class="row-label" id="focusPromoLabel">Hide promoted posts</span>
+            <span class="row-label" id="focusPromoLabel">Hide ads</span>
             <button type="button" class="switch" id="focusHidePromo" role="switch" aria-checked="false" aria-labelledby="focusPromoLabel" data-focus-key="hidePromoted"></button>
           </div>
           <div class="row">
-            <span class="row-label" id="focusGrokLabel">Hide Grok nav</span>
+            <span class="row-label" id="focusGrokLabel">Hide Grok</span>
             <button type="button" class="switch" id="focusHideGrok" role="switch" aria-checked="false" aria-labelledby="focusGrokLabel" data-focus-key="hideGrokNav"></button>
           </div>
           <div class="row">
-            <span class="row-label" id="focusCommLabel">Hide Communities nav</span>
+            <span class="row-label" id="focusCommLabel">Hide Communities</span>
             <button type="button" class="switch" id="focusHideComm" role="switch" aria-checked="false" aria-labelledby="focusCommLabel" data-focus-key="hideCommunitiesNav"></button>
           </div>
           <div class="row">
@@ -327,11 +319,12 @@
             <span class="row-label" id="focusTopicsLabel">Hide Topics / Spaces</span>
             <button type="button" class="switch" id="focusHideTopics" role="switch" aria-checked="false" aria-labelledby="focusTopicsLabel" data-focus-key="hideTopicsSpaces"></button>
           </div>
-        </section>
+        </div>
       </div>
     </div>
   </main>
 
+  <script src="popupStub.js"></script>
   <script src="countryFlags.js"></script>
   <script src="countryFilter.js"></script>
   <script src="focusMode.js"></script>
