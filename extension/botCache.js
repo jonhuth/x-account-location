@@ -19,7 +19,7 @@ const BOT_BATCH_SIZE = 5;
 const BOT_BATCH_DELAY = 500;
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_RETRIES = 2;
-const BACKEND_URL = "http://nas.tail5becd.ts.net:3004";
+const BACKEND_URL = ""; // parked — paid Safari build is client-only
 
 // Account reputation: after N consistent hits, skip server
 const ACCOUNT_PRIOR_MIN_SAMPLES = 3;
@@ -811,6 +811,7 @@ async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
 }
 
 async function classifyWithRetry(replyData, retries = MAX_RETRIES) {
+	if (!BACKEND_URL) return null;
 	for (let attempt = 0; attempt <= retries; attempt++) {
 		try {
 			const response = await fetchWithTimeout(`${BACKEND_URL}/api/classify`, {
@@ -1015,6 +1016,10 @@ function queueForClassification(username, replyData) {
 	// Also handle pure cache from resolveLocally when allowCache default
 	// (already returned above if present)
 
+	if (!BACKEND_URL) {
+		return Promise.resolve(null);
+	}
+
 	const promise = new Promise((resolve) => {
 		botClassificationQueue.push({
 			username: key,
@@ -1045,6 +1050,14 @@ async function dispatchBatch() {
 
 	const batch = botClassificationQueue.splice(0, BOT_BATCH_SIZE);
 	if (batch.length === 0) return;
+
+	if (!BACKEND_URL) {
+		batch.forEach((item) => {
+			pendingBotRequests.delete(item.username);
+			item.resolve(null);
+		});
+		return;
+	}
 
 	if (isCircuitOpen()) {
 		batch.forEach((item) => {

@@ -1,17 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "X Account Tools",
-  "version": "2.5.0",
-  "description": "Location flags, bot detection, focus declutter, mute/block tools for X/Twitter — Chrome + Safari (iOS/macOS)",
+  "name": "Spam Filter for X",
+  "short_name": "Spam Filter",
+  "version": "3.0.0",
+  "description": "Hide bots, spam countries, and clutter on X. All on-device.",
   "permissions": [
-    "activeTab",
     "storage",
-    "tabs",
-    "scripting"
+    "tabs"
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "X Account Tools",
+    "default_title": "Spam Filter for X",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -27,8 +26,7 @@
   },
   "host_permissions": [
     "https://x.com/*",
-    "https://twitter.com/*",
-    "http://nas.tail5becd.ts.net:3004/*"
+    "https://twitter.com/*"
   ],
   "content_scripts": [
     {
@@ -38,11 +36,11 @@
       ],
       "js": [
         "countryFlags.js",
+        "countryFilter.js",
         "botDetection.js",
         "botLegitimacy.js",
         "botCache.js",
         "botUI.js",
-        "muteBlock.js",
         "focusMode.js",
         "content.js"
       ],

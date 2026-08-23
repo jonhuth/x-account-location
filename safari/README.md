@@ -10,7 +10,7 @@ Shared WebExtension sources live in [`../extension/`](../extension/). This folde
 open Xcode/*.xcodeproj   # path printed by convert.sh
 ```
 
-Then follow **[TESTING.md](./TESTING.md)** for macOS Safari and iOS Safari (flags-first MVP).
+Then follow **[TESTING.md](./TESTING.md)** for macOS Safari and iOS Safari (flags + country hide).
 
 ## Layout after convert
 
@@ -28,4 +28,4 @@ safari/
 
 - **Safari = product** (paid niche, mobile Safari where Chrome extensions don’t exist)
 - **Chrome = R&D** (`chrome://extensions` → Load unpacked → `extension/`)
-- MVP validation: **location flags on iOS Safari**, X in the browser not the app
+- v1: **hide farms, hide spam countries, persist chrome** on iOS Safari. X in the browser, not the app. No backend.

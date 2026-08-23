@@ -25,13 +25,19 @@ const STATS_KEY = 'location_stats';
 // Bot Detection state
 const BOT_TOGGLE_KEY = 'bot_detection_enabled';
 const BOT_SENSITIVITY_KEY = 'bot_sensitivity';
+const HIDE_BOTS_KEY = 'hide_bots_enabled';
 let botDetectionEnabled = true;
+let hideBotsEnabled = true;
 let botSensitivity = 3;
 let pageScriptInjected = false;
 
 // Mute/block client-side hide (lists from popup Tools manager)
 let muteBlockState = null;
 let muteBlockScanScheduled = false;
+
+// Country filter — client-only timeline hide.
+let countryFilterState = { countries: [], updatedAt: 0 };
+let countryFilterScanScheduled = false;
 
 // Focus declutter (For You / News / trends / etc.)
 
@@ -68,13 +74,15 @@ let lastLoggedStoragePercent = -1;
 // Load enabled state
 async function loadEnabledState() {
   try {
-    const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY]);
+    const result = await chrome.storage.local.get([TOGGLE_KEY, BOT_TOGGLE_KEY, BOT_SENSITIVITY_KEY, HIDE_BOTS_KEY]);
     extensionEnabled = result[TOGGLE_KEY] !== undefined ? result[TOGGLE_KEY] : DEFAULT_ENABLED;
     botDetectionEnabled = result[BOT_TOGGLE_KEY] !== false;
+    hideBotsEnabled = result[HIDE_BOTS_KEY] !== false;
     botSensitivity = result[BOT_SENSITIVITY_KEY] || 3;
   } catch (error) {
     extensionEnabled = DEFAULT_ENABLED;
     botDetectionEnabled = true;
+    hideBotsEnabled = true;
     botSensitivity = 3;
   }
 }
@@ -90,7 +98,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   } else if (request.type === 'botDetectionToggle') {
     botDetectionEnabled = request.enabled;
     if (botDetectionEnabled) setTimeout(scheduleBotProcessing, 500);
-    else window.BotUI?.removeAllBotUI?.();
+    else {
+      window.BotUI?.removeAllBotUI?.();
+      clearBotHides();
+    }
+  } else if (request.type === 'hideBotsToggle') {
+    hideBotsEnabled = request.enabled;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach((el) => {
+      applyBotHideToTweet(el);
+    });
   } else if (request.type === 'botSensitivityChange') {
     botSensitivity = request.sensitivity;
   } else if (request.type === 'botWhitelistUpdate') {
@@ -111,21 +127,112 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     locationCache.clear();
     locationStats.clear();
     botDetectionEnabled = true;
+    hideBotsEnabled = true;
     botSensitivity = 3;
     extensionEnabled = true;
     muteBlockState = null;
+    countryFilterState = { countries: [], updatedAt: 0 };
     removeAllFlags();
     window.BotUI?.removeAllBotUI?.();
     clearMuteBlockHides();
+    clearCountryFilterHides();
     setTimeout(init, 500);
   } else if (request.type === 'muteBlockUpdated') {
     loadMuteBlockState().then(() => scheduleMuteBlockScan());
+  } else if (request.type === 'countryFilterUpdated') {
+    loadCountryFilterState().then(() => scheduleCountryFilterScan());
   } else if (request.type === 'focusModeUpdated') {
     window.FocusMode?.loadFocusState?.().then(() => {
       window.FocusMode?.applyFocusMode?.();
     });
   }
 });
+
+try {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes.hidden_countries) return;
+    loadCountryFilterState().then(() => scheduleCountryFilterScan());
+  });
+} catch {
+  /* Safari storage */
+}
+
+// ============================================================================
+// COUNTRY FILTER — hide tweet articles only
+// ============================================================================
+
+async function loadCountryFilterState() {
+  try {
+    countryFilterState = await window.CountryFilter?.loadHiddenCountries?.() || {
+      countries: [],
+      updatedAt: 0,
+    };
+  } catch {
+    countryFilterState = { countries: [], updatedAt: 0 };
+  }
+  return countryFilterState;
+}
+
+function reconcileTweetVisibility(el) {
+  if (!el?.style) return;
+  if (
+    el.hasAttribute('data-xat-geo-hidden') ||
+    el.hasAttribute('data-xat-muted') ||
+    el.hasAttribute('data-xat-bot-hidden')
+  ) {
+    el.style.display = 'none';
+  } else {
+    el.style.removeProperty('display');
+  }
+}
+
+function applyBotHideToTweet(el) {
+  if (!el?.matches?.('article[data-testid="tweet"]')) return;
+  const isBot = el.dataset.botVerdict === 'bot' || el.dataset.botProcessed === 'bot';
+  if (hideBotsEnabled && botDetectionEnabled && isBot) {
+    el.setAttribute('data-xat-bot-hidden', '1');
+  } else {
+    el.removeAttribute('data-xat-bot-hidden');
+  }
+  reconcileTweetVisibility(el);
+}
+
+function clearBotHides() {
+  document.querySelectorAll('article[data-testid="tweet"][data-xat-bot-hidden]').forEach((el) => {
+    el.removeAttribute('data-xat-bot-hidden');
+    reconcileTweetVisibility(el);
+  });
+}
+
+function clearCountryFilterHides() {
+  document.querySelectorAll('article[data-testid="tweet"][data-xat-geo-hidden]').forEach((el) => {
+    el.removeAttribute('data-xat-geo-hidden');
+    reconcileTweetVisibility(el);
+  });
+}
+
+function applyCountryFilterToTweet(el) {
+  if (!el?.matches?.('article[data-testid="tweet"]')) return;
+  const match = window.CountryFilter?.tweetMatchesHiddenCountry?.(
+    el,
+    locationCache,
+    countryFilterState,
+  );
+  if (match) el.setAttribute('data-xat-geo-hidden', '1');
+  else el.removeAttribute('data-xat-geo-hidden');
+  reconcileTweetVisibility(el);
+}
+
+function scheduleCountryFilterScan() {
+  if (countryFilterScanScheduled) return;
+  countryFilterScanScheduled = true;
+  requestAnimationFrame(() => {
+    countryFilterScanScheduled = false;
+    document.querySelectorAll('article[data-testid="tweet"]').forEach((el) => {
+      applyCountryFilterToTweet(el);
+    });
+  });
+}
 
 // ============================================================================
 // MUTE / BLOCK — client-side hide from popup lists
@@ -148,7 +255,7 @@ async function loadMuteBlockState() {
 function clearMuteBlockHides() {
   document.querySelectorAll('article[data-testid="tweet"][data-xat-muted]').forEach((el) => {
     el.removeAttribute('data-xat-muted');
-    el.style.removeProperty('display');
+    reconcileTweetVisibility(el);
   });
 }
 
@@ -156,7 +263,7 @@ function applyMuteBlockToTweet(el) {
   if (!el || !muteBlockState?.settings?.hideMatchingTweets) {
     if (el?.hasAttribute?.('data-xat-muted')) {
       el.removeAttribute('data-xat-muted');
-      el.style.removeProperty('display');
+      reconcileTweetVisibility(el);
     }
     return;
   }
@@ -165,11 +272,10 @@ function applyMuteBlockToTweet(el) {
     : false;
   if (match) {
     el.setAttribute('data-xat-muted', '1');
-    el.style.display = 'none';
   } else if (el.hasAttribute('data-xat-muted')) {
     el.removeAttribute('data-xat-muted');
-    el.style.removeProperty('display');
   }
+  reconcileTweetVisibility(el);
 }
 
 function scheduleMuteBlockScan() {
@@ -408,8 +514,9 @@ function makeLocationRequest(screenName) {
 
 function createLocationInfo(location) {
   if (!location) return { location: null, flag: null, displayText: null };
-  const flag = getCountryFlag(location);
-  return { location, flag, displayText: flag || `(${location})` };
+  const country = window.CountryFilter?.canonicalCountry?.(location) || String(location || '').trim();
+  const flag = getCountryFlag(country);
+  return { location, country, flag, displayText: flag || `(${location})` };
 }
 
 async function getLocation(screenName) {
@@ -615,6 +722,8 @@ const LOCATION_UI_STYLES = `
   font-size: 14px;
   color: inherit;
   user-select: none;
+  cursor: pointer;
+  touch-action: manipulation;
   white-space: nowrap;
 }
 
@@ -748,6 +857,8 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
 
   injectLocationStyles();
 
+  const country = window.CountryFilter?.canonicalCountry?.(locationInfo.location) ||
+    String(locationInfo.location || '').trim();
   const hasEmojiFlag = Boolean(locationInfo.flag);
   const flagSpan = document.createElement('span');
   flagSpan.className = hasEmojiFlag ? 'xat-flag' : 'xat-flag xat-flag--text';
@@ -756,12 +867,33 @@ function addFlagToElement(usernameElement, screenName, locationInfo) {
     ? locationInfo.flag
     : String(locationInfo.location || '').trim();
   flagSpan.setAttribute('data-twitter-flag', 'true');
-  flagSpan.setAttribute('title', locationInfo.location);
-  flagSpan.setAttribute('aria-label', `Account based in ${locationInfo.location}`);
+  flagSpan.setAttribute('role', 'button');
+  flagSpan.setAttribute('tabindex', '0');
+  flagSpan.setAttribute('title', `Based in ${country}. Tap to hide posts from ${country}.`);
+  flagSpan.setAttribute('aria-label', `Based in ${country}. Tap to hide posts from ${country}.`);
+
+  const toggleCountry = async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    countryFilterState = await window.CountryFilter?.toggleHiddenCountry?.(country) || countryFilterState;
+    scheduleCountryFilterScan();
+  };
+  flagSpan.addEventListener('click', toggleCountry);
+  flagSpan.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') toggleCountry(event);
+  });
 
   if (insertFlagElement(root, flagSpan, screenName)) {
     usernameElement.dataset.flagAdded = 'true';
     updateStats(screenName, locationInfo.location);
+    const article = usernameElement.matches?.('article[data-testid="tweet"]')
+      ? usernameElement
+      : root.closest?.('article[data-testid="tweet"]');
+    const articleUsername = article ? extractUsername(article) : '';
+    if (article && country && String(articleUsername || '').toLowerCase() === String(screenName || '').toLowerCase()) {
+      article.setAttribute('data-xat-country', country);
+      applyCountryFilterToTweet(article);
+    }
     return true;
   }
 
@@ -895,6 +1027,7 @@ function setupObservers() {
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
           scheduleMuteBlockScan();
+          scheduleCountryFilterScan();
         }, 150); // Faster mutation response
       }
     }
@@ -913,6 +1046,7 @@ function setupObservers() {
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
           scheduleMuteBlockScan();
+          scheduleCountryFilterScan();
         }, { timeout: 200 });
       } else {
         setTimeout(() => {
@@ -920,6 +1054,7 @@ function setupObservers() {
           if (extensionEnabled) processUsernamesThrottled();
           if (botDetectionEnabled) scheduleBotProcessing();
           scheduleMuteBlockScan();
+          scheduleCountryFilterScan();
         }, 150);
       }
     }
@@ -936,6 +1071,7 @@ function setupObservers() {
         if (extensionEnabled) processUsernamesThrottled();
         if (botDetectionEnabled) scheduleBotProcessing();
         scheduleMuteBlockScan();
+        scheduleCountryFilterScan();
       }, INIT_DELAY);
     }
   }, 500);
@@ -1050,6 +1186,8 @@ function applyKnownAndStop(el, username, verdict) {
   window.BotUI?.applyBotUI?.(el, verdict, username);
   el.dataset.botProcessed = statusFromVerdict(verdict);
   el.dataset.botUsername = String(username).toLowerCase();
+  el.dataset.botVerdict = statusFromVerdict(verdict);
+  applyBotHideToTweet(el);
   return true;
 }
 
@@ -1152,6 +1290,8 @@ async function processBotDetection(el) {
     window.BotUI?.applyBotUI?.(el, display, username);
     el.dataset.botProcessed = statusFromVerdict(display);
     el.dataset.botUsername = username.toLowerCase();
+    el.dataset.botVerdict = statusFromVerdict(display);
+    applyBotHideToTweet(el);
     return;
   }
 
@@ -1220,6 +1360,8 @@ async function processBotDetection(el) {
           ? 'slop'
           : 'human';
       el.dataset.botUsername = username.toLowerCase();
+      el.dataset.botVerdict = el.dataset.botProcessed;
+      applyBotHideToTweet(el);
       // Still index for thread dup so a later peer can match (detail views)
       window.BotDetection?.classifyThreadDuplicate?.(username, replyData);
       return;
@@ -1234,6 +1376,8 @@ async function processBotDetection(el) {
     window.BotUI?.applyBotUI?.(el, display, username);
     el.dataset.botProcessed = 'bot';
     el.dataset.botUsername = username.toLowerCase();
+    el.dataset.botVerdict = 'bot';
+    applyBotHideToTweet(el);
     const peers = Array.isArray(threadDup.peerUsernames)
       ? threadDup.peerUsernames
       : threadDup.peerUsername
@@ -1262,6 +1406,8 @@ async function processBotDetection(el) {
     const verdict = await window.BotCache?.queueForClassification?.(username, replyData);
     window.BotUI?.resolvePending?.(el, verdict, username);
     el.dataset.botProcessed = verdict?.isBot ? 'bot' : (verdict?.isSlop ? 'slop' : 'human');
+    el.dataset.botVerdict = el.dataset.botProcessed;
+    applyBotHideToTweet(el);
   } catch {
     el.querySelector?.('[data-bot-skeleton]')?.remove?.();
     el.dataset.botProcessed = 'error';
@@ -1399,6 +1545,7 @@ async function init() {
   await loadStats();
   await checkStorageUsage();
   await loadMuteBlockState();
+  await loadCountryFilterState();
   try {
     await window.FocusMode?.initFocusMode?.();
   } catch {
@@ -1412,13 +1559,13 @@ async function init() {
     muteBlockState.blockAccounts?.length
   ));
   const focusActive = Boolean(window.FocusMode?.anyFocusEnabled?.());
+  const countryFilterActive = countryFilterState.countries.length > 0;
 
   // Early return only if NOTHING is enabled
-  if (!extensionEnabled && !botDetectionEnabled && !muteActive && !focusActive) return;
+  if (!extensionEnabled && !botDetectionEnabled && !muteActive && !focusActive && !countryFilterActive) return;
   
-  // pageScript: passive user intercept + following list + location
-  // Needed for bot legitimacy even when location flags are off
-  if (extensionEnabled || botDetectionEnabled) {
+  // pageScript: location + optional bot legitimacy. Country hide needs locations too.
+  if (extensionEnabled || botDetectionEnabled || countryFilterActive) {
     if (extensionEnabled) injectLocationStyles();
     injectPageScript();
     await new Promise(resolve => setTimeout(resolve, 400));
@@ -1480,9 +1627,10 @@ async function init() {
   
   // Start processing - each function checks its own enabled state
   setTimeout(() => {
-    if (extensionEnabled) processUsernamesThrottled();
+    if (extensionEnabled || countryFilterActive) processUsernamesThrottled();
     if (botDetectionEnabled) scheduleBotProcessing();
     scheduleMuteBlockScan();
+    scheduleCountryFilterScan();
   }, INIT_DELAY);
   
   // Location cache periodic save

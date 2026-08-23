@@ -26,8 +26,9 @@ Parked product ideas — not scheduled. Pick when ROI is clear.
 
 ## Safari product
 
-- [ ] **iOS paid focus pack** — For you off + mute packs as App Store story
-- [ ] **Onboarding** for per-site allow + calm-home preset
+- [x] **Country hide** — tap a flag / popup list (v1)
+- [x] **Onboarding** for per-site allow + calm-home preset (v1)
+- [ ] **iOS paid focus pack** — extra mute packs after TestFlight
 
 ## Ops
 

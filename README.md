@@ -1,83 +1,33 @@
-# X Account Tools
+# Spam Filter for X
 
-Location flags, bot detection, and power tools for X/Twitter.
+Hide bots, spam countries, and clutter on X. All on this device.
 
-- **Chrome** — fast R&D (load unpacked)
-- **Safari (iOS + macOS)** — product surface (App Store / TestFlight shell)
+- **Safari (iOS + macOS)** — product (App Store / TestFlight)
+- **Chrome** — load unpacked from `extension/` for R&D
 
-Shared code is a Manifest V3 WebExtension under [`extension/`](./extension/).
+x.com only. Not Desloppify (all-web slop).
 
-## Features
+## What it does
 
-### Location Flags (Safari MVP)
-- Detects usernames on x.com / twitter.com
-- Uses X’s GraphQL About Account API (page context, your session)
-- Country flag emoji next to usernames
-- Works with infinite scroll; caches locations locally
+- Hide farm / bot accounts (local signals; people you follow stay)
+- Hide posts from countries that flood the feed
+- Hide X chrome (For you, Explore, trends, Who to follow, ads, …) — saved locally
 
-### Bot Detection
-- Client-first resolution (whitelist, follow trust, cache, local filters)
-- Optional Claude Haiku classification via the nas backend
-- Badges, dimming, quick actions
+## Chrome
 
-### Clean Interests
-- Desktop-oriented tool for Twitter interests settings
-- Prefer Chrome or macOS Safari; not the iOS MVP path
+`chrome://extensions` → Load unpacked → `extension/`
 
-## Install — Chrome
-
-1. Clone this repo
-2. `chrome://extensions/` → Developer mode → **Load unpacked**
-3. Select the **`extension/`** directory (not the repo root)
-4. Open x.com
-
-## Install — Safari (macOS + iOS)
-
-Requires a **Mac with Xcode**. Packaging cannot be completed on Linux alone.
+## Safari
 
 ```bash
-./safari/convert.sh          # generates safari/Xcode/
-open safari/Xcode/*.xcodeproj
+APP_NAME="Spam Filter for X" BUNDLE_ID=com.aevum.spamfilter ./safari/convert.sh
 ```
 
-Then follow **[safari/TESTING.md](./safari/TESTING.md)** for:
-
-- macOS Safari developer enable + site permissions
-- iOS device / Simulator run from Xcode
-- TestFlight personal install
-- Flags-first success checklist
-
-**Important:** Use **Safari → x.com**, not the X app. Mobile Chrome/Brave cannot run this extension.
-
-## Backend (bot AI)
-
-```bash
-cd backend
-bun install
-bun run dev      # :3000
-```
-
-Env: `ANTHROPIC_API_KEY=sk-ant-...`  
-Production: `http://nas.tail5becd.ts.net:3004` (Docker on nas; Railway retired 2026-08-13)
-
-## Repo layout
-
-```text
-extension/     Shared MV3 sources (Chrome + Safari)
-safari/        convert.sh, TESTING.md, generated Xcode (gitignored)
-backend/       Bun/Hono classify API
-```
-
-## Monetization direction
-
-Safari is intended as a **paid niche** product (paid app, IAP, or backend sub for AI). Chrome can stay free for personal use / R&D. StoreKit + license unlock in the containing app is a follow-up after flags ship on TestFlight.
+Use Safari → x.com, not the X app. [safari/TESTING.md](./safari/TESTING.md) · [docs/agent/app-store-ship.md](./docs/agent/app-store-ship.md)
 
 ## Privacy
 
-- Location queries use your logged-in X session in page context
-- Bot classification may call the hosted backend with reply/profile signals
-- Verdicts and location cache stored in extension local storage
-- No analytics SDK in the extension package today
+[docs/privacy.md](./docs/privacy.md)
 
 ## License
 
